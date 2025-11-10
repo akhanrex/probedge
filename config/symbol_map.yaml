@@ -1,0 +1,7 @@
+aliases:
+  # canonical UI name  ->  actual Kite tradingsymbol
+  TMPV: TMPV
+  # Fill these after we resolve exact names with the finder below
+  # BAJAJHFL: BAJAJHLDNG
+  # SWIGGY: ZOMATO
+  # ETERNAL: ??? 
