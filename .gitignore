@@ -13,3 +13,9 @@ data/*
 
 # (optional) allow a placeholder to make the folder appear
 !data/masters/.gitkeep
+
+# local-only data
+/data/intraday/
+/data/import/
+/data/ticks/
+/data/state/
