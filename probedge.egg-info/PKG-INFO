@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: probedge
+Version: 0.1.0
+Requires-Python: >=3.10
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn[standard]>=0.27
+Requires-Dist: pydantic>=2.6
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: pandas>=2.2
