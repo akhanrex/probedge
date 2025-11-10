@@ -20,10 +20,13 @@ import asyncio
 from probedge.infra.settings import SETTINGS
 from probedge.realtime.agg5 import run_agg
 
+
+from probedge.decision.timeline import run_timeline
 @app.on_event("startup")
 async def _agg_start():
     if SETTINGS.mode == "live":
         app.state.agg_task = asyncio.create_task(run_agg(SETTINGS.symbols))
+        app.state.timeline_task = asyncio.create_task(run_timeline())
 
 @app.on_event("shutdown")
 async def _agg_stop():
