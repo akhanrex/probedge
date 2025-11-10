@@ -19,3 +19,9 @@ data/*
 /data/import/
 /data/ticks/
 /data/state/
+
+# local-only data
+/data/intraday/
+/data/import/
+/data/ticks/
+/data/state/
