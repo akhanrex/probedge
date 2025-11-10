@@ -1,6 +1,7 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import config, tm5, matches, state, journal, kill
+from .routes import config, journal, kill, matches, state, tm5
 from .ws import live as wslive
 app = FastAPI(title="Probedge API")
 app.include_router(config.router)
@@ -33,3 +34,5 @@ async def _agg_stop():
     t = getattr(app.state, "agg_task", None)
     if t:
         t.cancel()
+
+app.mount("/ui", StaticFiles(directory="apps/api/static", html=True), name="ui")
