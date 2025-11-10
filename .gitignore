@@ -2,6 +2,14 @@
 __pycache__/
 *.pyc
 .env
-data/
-legacy/
 .DS_Store
+
+# ignore all data by default…
+data/*
+
+# …but DO track masters
+!data/masters/
+!data/masters/*.csv
+
+# (optional) allow a placeholder to make the folder appear
+!data/masters/.gitkeep
