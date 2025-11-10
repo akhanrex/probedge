@@ -1,7 +1,14 @@
 aliases:
-  # canonical UI name  ->  actual Kite tradingsymbol
+  # legacy -> real
+  TATAMOTORS: TMPV
+  # identity entries (explicit, future-proof)
   TMPV: TMPV
-  # Fill these after we resolve exact names with the finder below
-  # BAJAJHFL: BAJAJHLDNG
-  # SWIGGY: ZOMATO
-  # ETERNAL: ??? 
+  ETERNAL: ETERNAL
+  SWIGGY: SWIGGY
+  BAJAJHFL: BAJAJHFL
+  JIOFIN: JIOFIN
+  HAL: HAL
+  LICI: LICI
+  BAJFINANCE: BAJFINANCE
+  JSWENERGY: JSWENERGY
+  RECLTD: RECLTD
