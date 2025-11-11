@@ -1,13 +1,16 @@
 from fastapi import FastAPI
+from apps.api.routes import tm5 as tm5_route
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from .routes import config, journal, kill, matches, state, tm5
+from .routes import state_file
 from .ws import live as wslive
 app = FastAPI(title="Probedge API")
 app.include_router(config.router)
 app.include_router(tm5.router)
 app.include_router(matches.router)
-app.include_router(state.router)
+app.include_router(state_file.router)
+# # app.include_router(state.router)  # disabled  # disabled in favor of file-backed state
 app.include_router(journal.router)
 app.include_router(kill.router)
 app.include_router(wslive.router)
@@ -36,3 +39,5 @@ async def _agg_stop():
         t.cancel()
 
 app.mount("/ui", StaticFiles(directory="apps/api/static", html=True), name="ui")
+
+app.include_router(tm5_route.router)

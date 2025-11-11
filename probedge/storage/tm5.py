@@ -1,30 +1,41 @@
-import os, pandas as pd
-from .common import ensure_dir
-from ..infra.settings import SETTINGS
+from __future__ import annotations
+import os
+import numpy as np
+import pandas as pd
+from probedge.infra.settings import SETTINGS
 
-LEGACY_TM5 = [
-    "data/intraday/{sym}_tm5min.csv",
-    "data/intraday/{sym}_TM5MIN.csv",
-]
+ALIASES = {"TATAMOTORS": "TMPV"}
 
-def path_for(sym: str) -> str:
-    p = SETTINGS.paths.intraday.format(sym=sym)
-    if os.path.exists(p):
-        return p
-    for c in LEGACY_TM5:
-        c2 = c.format(sym=sym)
-        if os.path.exists(c2):
-            return c2
-    return p
+def _resolve(sym: str) -> str:
+    return ALIASES.get(sym.upper(), sym.upper())
 
-def read(sym: str) -> pd.DataFrame:
-    p = path_for(sym)
+def _path_for(sym: str) -> str:
+    sym1 = _resolve(sym)
+    return SETTINGS.paths.intraday.format(sym=sym1)
+
+def read(symbol: str) -> pd.DataFrame:
+    p = _path_for(symbol)
     if not os.path.exists(p):
-        return pd.DataFrame()
-    return pd.read_csv(p)
+        return pd.DataFrame(columns=["date","open","high","low","close","volume"])
+    df = pd.read_csv(p)
 
-def write(sym: str, df: pd.DataFrame) -> str:
-    p = SETTINGS.paths.intraday.format(sym=sym)
-    ensure_dir(os.path.dirname(p))
-    df.to_csv(p, index=False)
-    return p
+    # normalize date column
+    for c in ("Date","date","timestamp","Datetime","datetime"):
+        if c in df.columns:
+            df = df.rename(columns={c: "date"})
+            break
+
+    # safe stringify timestamps
+    try:
+        if "date" in df.columns:
+            dt = pd.to_datetime(df["date"], errors="coerce")
+            df["date"] = dt.dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        try:
+            df["date"] = df["date"].astype(str)
+        except Exception:
+            pass
+
+    # sanitize for JSON
+    df = df.replace([np.inf, -np.inf], np.nan)
+    return df
