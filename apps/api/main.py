@@ -27,6 +27,7 @@ def health():
 from apps.api.routes import tm5 as tm5_route
 from apps.api.routes import config as config_route
 from apps.api.routes import matches as matches_route
+from apps.api.routes import settings_debug as settings_debug_route
 from apps.api.routes import journal as journal_route
 
 # Optional (guarded)
@@ -40,6 +41,7 @@ except Exception:
 app.include_router(config_route.router)
 app.include_router(tm5_route.router)
 app.include_router(matches_route.router)
+app.include_router(settings_debug_route.router)
 app.include_router(journal_route.router)
 
 # ---- static (index.html / terminal.html)
