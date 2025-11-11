@@ -9,6 +9,7 @@ dependencies = [
   "python-dotenv>=1.0",
   "pyyaml>=6.0",
   "pandas>=2.2",
+  "kiteconnect>=4.2",
 ]
 
 [build-system]

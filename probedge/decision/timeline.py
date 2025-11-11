@@ -1,62 +1,66 @@
 import asyncio, json
-from datetime import datetime
-import zoneinfo
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from probedge.infra.settings import SETTINGS
+from probedge.decision.tags_engine import compute_tags_for_day
 
-IST = zoneinfo.ZoneInfo("Asia/Kolkata")
+IST = timezone(timedelta(hours=5, minutes=30))
 STATE_PATH = Path("data/state/live_state.json")
-STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-def ist_now():
-    return datetime.now(tz=IST)
+def ist_now():    return datetime.now(IST)
+def ist_today():  return ist_now().date()
+def at_today(h,m,s=0): return datetime.combine(ist_today(), time(h, m, s, tzinfo=IST))
 
-def today_at(h, m, s=0):
-    n = ist_now()
-    return n.replace(hour=h, minute=m, second=s, microsecond=0)
+async def sleep_until(dt: datetime):
+    dt = dt.astimezone(IST)
+    sec = (dt - ist_now()).total_seconds()
+    if sec > 0:
+        await asyncio.sleep(sec)
 
-async def sleep_until(dt):
-    delay = (dt - ist_now()).total_seconds()
-    if delay > 0:
-        await asyncio.sleep(delay)
-
-async def write_state(obj):
+def write_state_sync(obj: dict):
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(obj, indent=2, default=str))
 
+async def write_state(obj: dict):
+    write_state_sync(obj)
+
 async def run_timeline():
+    syms = SETTINGS.symbols
     while True:
-        t_pdc = today_at(9,25)
-        t_ol  = today_at(9,30)
-        t_ot  = today_at(9,39,50)
-        t_arm = today_at(9,40)
+        today = ist_today()
+        plan = {"date": str(today), "symbols": syms, "steps": [], "status": "init", "tags": {}}
 
-        plan = {
-            "date": ist_now().date().isoformat(),
-            "symbols": SETTINGS.symbols,
-            "steps": [],
-            "status": "init"
-        }
+        # schedule (IST)
+        t_pdc = at_today(9,25,0)
+        t_ol  = at_today(9,30,0)
+        t_ot  = at_today(9,39,50)
+        t_arm = at_today(9,40,0)
 
-        # 09:25 PDC
-        await sleep_until(t_pdc)
-        plan["steps"].append({"ts": ist_now().isoformat(), "step": "PDC", "note": "prev-day context pending"})
-        await write_state(plan)
+        async def do(step, key):
+            plan["steps"].append({"ts": ist_now().isoformat(), "step": step, "note": "computed"})
+            for sym in syms:
+                try:
+                    t = compute_tags_for_day(sym, date_target=today)
+                    plan["tags"].setdefault(sym, {})[key] = t[key]
+                except Exception as e:
+                    plan["tags"].setdefault(sym, {})[key] = f"ERR:{e}"
+            await write_state(plan)
 
-        # 09:30 OL
-        await sleep_until(t_ol)
-        plan["steps"].append({"ts": ist_now().isoformat(), "step": "OL", "note": "open location pending"})
-        await write_state(plan)
+        # Run steps in order, sleeping if we're before schedule; if we're past, do immediately.
+        if ist_now() < t_pdc: await sleep_until(t_pdc)
+        await do("PDC", "PDC")
 
-        # 09:39:50 OT
-        await sleep_until(t_ot)
-        plan["steps"].append({"ts": ist_now().isoformat(), "step": "OT", "note": "opening trend pending"})
-        await write_state(plan)
+        if ist_now() < t_ol: await sleep_until(t_ol)
+        await do("OL", "OL")
 
-        # 09:40 ARM
-        await sleep_until(t_arm)
-        plan["steps"].append({"ts": ist_now().isoformat(), "step": "ARM", "note": "entries logic pending"})
+        if ist_now() < t_ot: await sleep_until(t_ot)
+        await do("OT", "OT")
+
+        if ist_now() < t_arm: await sleep_until(t_arm)
+        plan["steps"].append({"ts": ist_now().isoformat(), "step": "ARM", "note": "armed"})
         plan["status"] = "armed"
         await write_state(plan)
 
-        # keep task alive
-        await asyncio.sleep(60)
+        # sleep to next day 09:00 IST
+        next_morning = datetime.combine(today + timedelta(days=1), time(9,0,tzinfo=IST))
+        await sleep_until(next_morning)

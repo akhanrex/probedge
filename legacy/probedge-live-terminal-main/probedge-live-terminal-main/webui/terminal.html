@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Probedge Terminal</title>
+  <link rel="stylesheet" href="/webui/terminal.css" />
+</head>
+<body>
+  <header>
+    <div class="controls">
+      <label>Risk (₹):
+        <input id="risk" type="number" value="1000" />
+      </label>
+      <label>Entry Mode:
+        <select id="entryMode">
+          <option value="5THBAR">5th-Bar Break</option>
+          <option value="6TO10" selected>Bars 6–10 Prev-Bar Break</option>
+        </select>
+      </label>
+      <button id="killswitch" class="btn-kill">KILL</button>
+    </div>
+  </header>
+
+  <main>
+    <table id="terminal" class="grid">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>LTP</th>
+          <th>PDC</th>
+          <th>OL</th>
+          <th>OT</th>
+          <th>Pick</th>
+          <th>Conf%</th>
+          <th>Entry</th>
+          <th>SL</th>
+          <th>T1</th>
+          <th>T2</th>
+          <th>Trigger</th>
+          <th>EntryAt</th>
+          <th>EntryBar#</th>
+          <th>ExitAt</th>
+          <th>ExitReason</th>
+          <th>Status</th>
+          <th>PnL</th>
+        </tr>
+      </thead>
+      <tbody id="terminalBody"></tbody>
+    </table>
+  </main>
+
+  <!-- add right below the main table -->
+  <section style="margin-top:16px">
+    <h3 style="margin:0 0 8px 4px;color:var(--hi);font-size:14px;">Journal (last 200)</h3>
+    <table class="grid" id="journal">
+      <thead>
+        <tr>
+          <th>Date/Time</th><th>Symbol</th><th>Pick</th><th>Entry</th><th>Exit</th>
+          <th>Qty</th><th>Result</th><th>PnL</th>
+        </tr>
+      </thead>
+      <tbody id="journal-body"></tbody>
+    </table>
+  </section>
+
+  <script src="/webui/terminal.js"></script>
+</body>
+</html>

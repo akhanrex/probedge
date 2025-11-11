@@ -1,0 +1,8 @@
+Streamlit >=1.28
+pandas
+plotly
+streamlit-authenticator
+openpyxl>=3.1.2
+plotly>=5.18
+kiteconnect==4.2.0
+websocket-client>=1.6

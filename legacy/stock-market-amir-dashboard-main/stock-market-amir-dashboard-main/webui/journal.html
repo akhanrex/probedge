@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Probedge Journal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/webui/css/app.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-inner">
+      <!-- Brand → always back to main terminal (9010) -->
+      <a class="brand" href="http://127.0.0.1:9010/webui/pages/terminal.html#" title="Back to Terminal">
+        <div class="logo">
+          <img src="/assets/probedge_main.png" alt="Probedge" />
+        </div>
+      </a>
+      <nav class="top-nav" aria-label="Global">
+        <!-- Live Terminal (9002) -->
+        <a class="nav-btn" data-variant="outline" href="http://127.0.0.1:9002/webui/terminal.html">Live Terminal</a>
+        <a class="nav-btn" data-variant="primary" href="/webui/journal.html">Journal</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel glass">
+      <div class="panel-head">
+        <div>
+          <h2 class="panel-title">Trading Journal</h2>
+          <p class="page-sub">Daily net P&amp;L and R-multiples from <code>data/latest/tradebook.csv</code> aligned with Master tags.</p>
+        </div>
+
+        <!-- Filters -->
+        <div class="panel-actions">
+          <select id="jrnlSymbol" class="input">
+            <option value="ALL">All Symbols</option>
+          </select>
+          <input type="date" id="jrnlFrom" class="input" />
+          <input type="date" id="jrnlTo" class="input" />
+          <input id="jrnlSearch" class="input" placeholder="Search note / tags…" />
+        </div>
+      </div>
+
+      <!-- KPI grid (all indicators in neat cards) -->
+      <div id="kpiRow" class="kpi-grid"></div>
+
+      <!-- Charts -->
+      <div class="charts-row">
+        <div class="chart-card">
+          <h3 class="chart-title">Equity Curve (₹)</h3>
+          <canvas id="equityCurve"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-title">Daily Net R Distribution</h3>
+          <canvas id="rHistogram"></canvas>
+        </div>
+      </div>
+
+      <!-- Daily table -->
+      <div class="table-wrap">
+        <table class="matches-table" id="jrnlTable">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Symbol</th>
+              <th>Trades</th>
+              <th>Buy Turnover</th>
+              <th>Sell Turnover</th>
+              <th>Net P&amp;L</th>
+              <th>Day R</th>
+              <th>PrevDayContext</th>
+              <th>GapType</th>
+              <th>OpenLocation</th>
+              <th>OpeningTrend</th>
+              <th>RangeStatus</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="jrnlEmpty" class="meta" style="display:none;">No journal data for current filters.</div>
+      </div>
+
+      <!-- API error surface -->
+      <div id="jrnlErr" class="meta" style="display:none; color:#b91c1c; margin-top:8px;"></div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <div>© Probedge • Journal</div>
+  </footer>
+
+  <script type="module" src="/webui/js/journal_page.js"></script>
+</body>
+</html>

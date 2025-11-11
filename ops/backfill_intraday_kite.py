@@ -1,116 +1,99 @@
-import os, json, time
+import os, json, math
 from pathlib import Path
-from datetime import datetime, timedelta
 import pandas as pd
 from kiteconnect import KiteConnect
+from probedge.infra.settings import SETTINGS
 
-ROOT = Path(__file__).resolve().parents[1]
-INTRA_DIR = ROOT / "data" / "intraday"
-CFG_SYM = ROOT / "config" / "symbol_map.json"
-TOK_CACHE = ROOT / "data" / "diagnostics" / "kite_tokens.csv"
-INTRA_DIR.mkdir(parents=True, exist_ok=True)
-TOK_CACHE.parent.mkdir(parents=True, exist_ok=True)
-
-api_key  = os.environ["KITE_API_KEY"]
-acc_token= os.environ["KITE_ACCESS_TOKEN"]
+# --- kite init ---
+api_key = os.environ["KITE_API_KEY"]
+acc_tok = os.environ["KITE_ACCESS_TOKEN"]
 kite = KiteConnect(api_key=api_key)
-kite.set_access_token(acc_token)
+kite.set_access_token(acc_tok)
 
-sym_map = json.loads(CFG_SYM.read_text())
-# Resolve instrument_token from tradingsymbol (NSE)
-def resolve_tokens():
-    if TOK_CACHE.exists():
-        return pd.read_csv(TOK_CACHE)
-    rows=[]
-    for ins in kite.instruments(exchange="NSE"):
-        rows.append(ins)
-    df = pd.DataFrame(rows)
-    df.to_csv(TOK_CACHE, index=False)
-    return df
+# --- paths ---
+INTRA_DIR = Path(getattr(SETTINGS.paths, "intraday", "data/intraday"))
+INTRA_DIR.mkdir(parents=True, exist_ok=True)
 
-ins_df = resolve_tokens()
+# --- symbol map ---
+mp = {}
+p = Path("config/symbol_map.json")
+if p.exists():
+    mp = json.loads(p.read_text())
 
-def token_for(tradingsymbol: str):
-    r = ins_df[ins_df["tradingsymbol"]==tradingsymbol]
-    if r.empty:
-        raise RuntimeError(f"tradingsymbol not found on NSE: {tradingsymbol}")
-    return int(r.iloc[0]["instrument_token"])
+# --- build instrument map once ---
+print("Downloading NSE instruments…")
+instruments = kite.instruments("NSE")
+by_ts = {row["tradingsymbol"].upper(): row for row in instruments}
 
-def dtrange_days(n_days:int):
-    # last n calendar days including today (we'll fetch per-day windows)
-    today = datetime.now()
-    days = [(today - timedelta(days=i)).date() for i in range(n_days)]
-    return sorted(set(days))
+def ts_for(sym: str) -> str:
+    t = mp.get(sym, sym).upper()
+    if t not in by_ts:
+        raise ValueError(f"Tradingsymbol not found on NSE: {t} (for {sym})")
+    return t
 
-def read_existing(sym: str) -> pd.DataFrame:
-    p = INTRA_DIR / f"{sym}_5minute.csv"
-    if not p.exists():
-        return pd.DataFrame(columns=["DateTime","Open","High","Low","Close","Volume","Date"])
-    df = pd.read_csv(p)
-    # normalize
-    dt = pd.to_datetime(df.get("DateTime", pd.Series(dtype=str)), errors="coerce")
-    # keep raw strings; we’ll reformat on write — but compute Date now
-    d  = pd.to_datetime(df.get("Date", pd.Series(dtype=str)), errors="coerce")
-    if d.isna().all() and not dt.isna().all():
-        d = dt.dt.tz_localize(None).dt.normalize()
-    df["DateTime"] = dt
-    df["Date"] = d
-    return df.dropna(subset=["DateTime","Open","High","Low","Close"]).sort_values("DateTime")
+def path_for(sym: str) -> Path:
+    return INTRA_DIR / f"{sym}_5minute.csv"
 
-def fetch_one_day(inst_token: int, day) -> pd.DataFrame:
-    # 09:00–15:30 IST to be safe window; interval=5minute
-    start = datetime(day.year, day.month, day.day, 9, 0)
-    end   = datetime(day.year, day.month, day.day, 15, 30)
-    candles = kite.historical_data(inst_token, start, end, interval="5minute", continuous=False, oi=False)
-    if not candles:
-        return pd.DataFrame(columns=["DateTime","Open","High","Low","Close","Volume","Date"])
-    df = pd.DataFrame(candles)
-    df = df.rename(columns={"date":"DateTime","open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
-    df["DateTime"] = pd.to_datetime(df["DateTime"], utc=True).dt.tz_convert("Asia/Kolkata")
-    df["Date"] = df["DateTime"].dt.tz_localize(None).dt.normalize()
-    # drop timezone for storage, but keep +05:30 text on write
-    df["DateTime"] = df["DateTime"].dt.tz_localize(None)
-    return df[["DateTime","Open","High","Low","Close","Volume","Date"]]
+def fetch_day(token: int, day: pd.Timestamp) -> pd.DataFrame:
+    fr = pd.Timestamp(day).tz_localize("Asia/Kolkata").replace(hour=9,  minute=0,  second=0, microsecond=0)
+    to = pd.Timestamp(day).tz_localize("Asia/Kolkata").replace(hour=15, minute=30, second=0, microsecond=0)
+    data = kite.historical_data(token, fr.to_pydatetime(), to.to_pydatetime(), interval="minute", continuous=False, oi=False)
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    # Kite returns 'date' tz-aware; normalize to naive local for our pipeline
+    df["DateTime"] = pd.to_datetime(df["date"]).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+    df = df.rename(columns={"open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
+    df["Date"] = df["DateTime"].dt.normalize()
+    return df[["DateTime","Open","High","Low","Close","Volume","Date"]].sort_values("DateTime")
 
-LOOKBACK_DAYS = 15  # adjust as needed
-for sym, tsym in sym_map.items():
-    cur = read_existing(sym)
-    have_days = set(pd.to_datetime(cur["Date"]).dt.normalize()) if not cur.empty else set()
-    target_days = [pd.Timestamp(d) for d in dtrange_days(LOOKBACK_DAYS)]
-    need = [d for d in target_days if d.normalize() not in have_days]
-    if not need:
-        print(f"[{sym}] up-to-date, rows={len(cur)}"); 
-        # still rewrite to unify format
+# --- trading days set (last 120 present on exchange calendar via instruments dump) ---
+# Conservative: derive from any existing symbol that has most data, else fallback to last 180 calendar days.
+def last_n_days(n=120):
+    # calendar from pandas bdate_range ~ Indian holidays ignored -> we overshoot and rely on empty fetches being skipped
+    end = pd.Timestamp.today(tz="Asia/Kolkata").normalize().tz_localize(None)
+    # start a bit early to be safe
+    start = end - pd.Timedelta(days=int(n*2))
+    return pd.date_range(start, end, freq="B").date
+
+days = list(last_n_days(120))
+
+for sym in SETTINGS.symbols:
+    ts = ts_for(sym)
+    token = by_ts[ts]["instrument_token"]
+    path = path_for(sym)
+    cur = pd.DataFrame()
+    if path.exists():
+        cur = pd.read_csv(path)
         if not cur.empty:
-            out = cur.copy()
-            out["DateTime"] = out["DateTime"].dt.strftime("%Y-%m-%dT%H:%M:%S+05:30")
-            out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
-            out.to_csv(INTRA_DIR / f"{sym}_5minute.csv", index=False)
-        continue
-
-    itok = token_for(tsym)
-    adds=[]
-    for d in need:
+            cur["DateTime"] = pd.to_datetime(cur["DateTime"], errors="coerce")
+            cur["Date"] = pd.to_datetime(cur.get("Date", cur["DateTime"].dt.normalize()), errors="coerce").dt.tz_localize(None).dt.normalize()
+    have = set(cur["Date"].dropna().unique()) if not cur.empty else set()
+    adds = []
+    for d in days:
+        d = pd.Timestamp(d)
+        if d in have:  # already have day
+            continue
         try:
-            df = fetch_one_day(itok, d.date())
+            df = fetch_day(token, d)
             if not df.empty:
                 adds.append(df)
-            time.sleep(0.25)
         except Exception as e:
             print(f"[{sym}] {d.date()} fetch ERR {e}")
-            time.sleep(0.5)
 
-    new = (pd.concat([cur] + adds, ignore_index=True) if not cur.empty else pd.concat(adds, ignore_index=True)) if adds else cur
+    if adds:
+        new = pd.concat([cur] + adds, ignore_index=True) if not cur.empty else pd.concat(adds, ignore_index=True)
+        new = new.dropna(subset=["DateTime","Open","High","Low","Close"]).sort_values("DateTime").drop_duplicates("DateTime", keep="last")
+    else:
+        new = cur
+
     if new.empty:
-        print(f"[{sym}] no data written (empty)"); 
-        continue
-    new = new.dropna(subset=["DateTime","Open","High","Low","Close"]).sort_values("DateTime").drop_duplicates("DateTime", keep="last")
+        print(f"[{sym}] no data written (still empty)"); continue
+
+    # write as ISO w/ +05:30 string (your existing convention)
     out = new.copy()
     out["DateTime"] = out["DateTime"].dt.strftime("%Y-%m-%dT%H:%M:%S+05:30")
     out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
-    path = INTRA_DIR / f"{sym}_5minute.csv"
     out.to_csv(path, index=False)
-    added = 0 if not adds else sum(len(x) for x in adds)
-    print(f"[{sym}] intraday rows={len(new)} (added {added}) → {path}")
-
+    print(f"[{sym}] intraday rows={len(new)} (added {sum(len(x) for x in adds) if adds else 0}) → {path}")
 print("Done backfill.")

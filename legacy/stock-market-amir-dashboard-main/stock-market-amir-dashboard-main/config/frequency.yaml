@@ -1,0 +1,59 @@
+# ===== Probedge Frequency Config (Colab-aligned, loose but structured) =====
+
+# Core gates
+edge_pp: 8.0           # minimum freq gap in percentage points between BULL vs BEAR
+conf_floor: 55         # minimum confidence (%) to allow a trade (from frequency)
+
+# OpeningTrend alignment: only enforce if OT ∈ {BULL, BEAR}
+require_ot_align: true
+
+# Minimum samples per ladder level
+min_samples:
+  L3: 8                # exact (OT, OL, PDC)
+  L2: 6                # (OT, OL)
+  L1: 4                # (OT)
+  L0: 3                # global
+
+# Fallback controls
+fallback:
+  use_L2: true
+  use_L1: true
+  use_L0: true
+
+# History use (keep all)
+use_all_history: true
+lookback_years: 6      # reserved for future toggles
+
+# Master CSVs
+masters:
+  TATAMOTORS:  data/masters/TATAMOTORS_5MINUTE_MASTER.csv
+  ETERNAL:     data/masters/ETERNAL_5MINUTE_MASTER.csv
+  JIOFIN:      data/masters/JIOFIN_5MINUTE_MASTER.csv
+  HAL:         data/masters/HAL_5MINUTE_MASTER.csv
+  LICI:        data/masters/LICI_5MINUTE_MASTER.csv
+  BAJFINANCE:  data/masters/BAJFINANCE_5MINUTE_MASTER.csv
+  JSWENERGY:   data/masters/JSWENERGY_5MINUTE_MASTER.csv
+  RECLTD:      data/masters/RECLTD_5MINUTE_MASTER.csv
+  BAJAJHFL:    data/masters/BAJAJHFL_5MINUTE_MASTER.csv
+  SWIGGY:      data/masters/SWIGGY_5MINUTE_MASTER.csv
+
+tm5:
+  TATAMOTORS: data/intraday/TATAMOTORS_5minute.csv
+  ETERNAL:    data/intraday/ETERNAL_5minute.csv
+  JIOFIN:     data/intraday/JIOFIN_5minute.csv
+  HAL:        data/intraday/HAL_5minute.csv
+  LICI:       data/intraday/LICI_5minute.csv
+  BAJFINANCE: data/intraday/BAJFINANCE_5minute.csv
+  JSWENERGY:  data/intraday/JSWENERGY_5minute.csv
+  RECLTD:     data/intraday/RECLTD_5minute.csv
+  BAJAJHFL:   data/intraday/BAJAJHFL_5minute.csv
+  SWIGGY:     data/intraday/SWIGGY_5minute.csv
+
+
+# Canonical column names in masters
+cols:
+  date: Date
+  result: Result
+  ot: OpeningTrend
+  ol: OpenLocation
+  pdc: PrevDayContext

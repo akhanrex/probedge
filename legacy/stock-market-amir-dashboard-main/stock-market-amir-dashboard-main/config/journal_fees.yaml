@@ -1,0 +1,34 @@
+BROKER: "zerodha"
+PLAN: "retail"
+# Brokerage (intraday/delivery) – Zerodha cap: ₹20 per executed order or 0.03% (lower), F&O ₹20/order
+brokerage_intraday_pct: 0.0003   # 0.03%
+brokerage_intraday_cap: 20
+brokerage_delivery_pct: 0.0
+brokerage_delivery_cap: 0
+brokerage_fo_flat: 20
+
+# Exchange transaction charges (approx; update if needed)
+txn_eq_intraday_pct: 0.00032     # 0.032% of turnover (both sides)
+txn_eq_delivery_pct: 0.00032
+txn_fo_index_pct: 0.000053
+txn_fo_stock_pct: 0.0002
+
+# STT (Securities Transaction Tax)
+stt_eq_intraday_pct: 0.00025     # sell side only (approx)
+stt_eq_delivery_pct_buy: 0.001    # buy side
+stt_eq_delivery_pct_sell: 0.001   # sell side
+stt_fo_sell_pct: 0.0000625       # sell side (futures/options, approx)
+
+# GST (18%) on (brokerage + exchange txn + SEBI + clearing)
+gst_pct: 0.18
+
+# SEBI charges
+sebi_charges_per_crore: 10        # ₹ per ₹1 crore of turnover
+
+# Stamp duty (buy side)
+stamp_eq_intraday_pct: 0.00003
+stamp_eq_delivery_pct: 0.00015
+stamp_fo_pct: 0.000003
+
+# DP charges (for delivery sell, per day you sell, not per trade)
+dp_charge_per_sale_day: 15.93     # update per your contract note
