@@ -1,8 +1,13 @@
 from fastapi import APIRouter, Query
 from probedge.storage import masters as mstore
 router = APIRouter(prefix="/api", tags=["matches"])
-@router.get("/matches")
-def get_matches(symbol: str = Query(...), ot: str | None = Query(None), ol: str | None = Query(None), pdc: str | None = Query(None)):
+@router.get("/api/matches")
+def get_matches(
+    symbol: str = Query(...),
+    ot: Optional[str] = Query(None),
+    ol: Optional[str] = Query(None),
+    pdc: Optional[str] = Query(None),
+):
     df = mstore.read(symbol)
     if df.empty: return {"symbol": symbol, "dates": [], "rows": 0}
     # case-insensitive column map
