@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from apps.api.routes import tm5 as tm5_route
+from apps.api.routes import matches as matches_route
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from .routes import config, journal, kill, matches, state, tm5
@@ -14,6 +15,8 @@ app.include_router(state_file.router)
 app.include_router(journal.router)
 app.include_router(kill.router)
 app.include_router(wslive.router)
+app.include_router(tm5_route.router)
+app.include_router(matches_route.router)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 @app.get("/api/health")
 def health(): return {"ok": True}
@@ -40,4 +43,3 @@ async def _agg_stop():
 
 app.mount("/ui", StaticFiles(directory="apps/api/static", html=True), name="ui")
 
-app.include_router(tm5_route.router)
