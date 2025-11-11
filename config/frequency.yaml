@@ -1,7 +1,6 @@
 symbols:
   - TMPV
   - ETERNAL
-  - SWIGGY
   - JIOFIN
   - HAL
   - LICI
@@ -9,9 +8,11 @@ symbols:
   - JSWENERGY
   - RECLTD
   - BAJAJHFL
+  - SWIGGY
+
 paths:
-  masters:   "data/masters/{sym}_5MINUTE_MASTER.csv"
-  intraday:  "data/intraday/{sym}_5minute.csv"
-  ticks:     "data/ticks/{date}/{sym}.parquet"
-  journal:   "data/journal/journal.csv"
-  state:     "data/state/live_state.json"
+  masters:  "data/masters/{sym}_5MINUTE_MASTER.csv"
+  intraday: "data/intraday/{sym}_5minute.csv"
+  ticks:    "data/ticks/{date}/{sym}.parquet"
+  journal:  "data/journal/journal.csv"
+  state:    "data/state/live_state.json"
