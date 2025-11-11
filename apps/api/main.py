@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
@@ -24,7 +25,9 @@ def health():
 # -------- routers --------
 # Required
 from apps.api.routes import tm5 as tm5_route
+from apps.api.routes import config as config_route
 from apps.api.routes import matches as matches_route
+from apps.api.routes import journal as journal_route
 
 # Optional (guarded)
 try:
@@ -34,5 +37,10 @@ except Exception:
     pass
 
 # Include ours last (last wins)
+app.include_router(config_route.router)
 app.include_router(tm5_route.router)
 app.include_router(matches_route.router)
+app.include_router(journal_route.router)
+
+# ---- static (index.html / terminal.html)
+app.mount("/", StaticFiles(directory="apps/api/static", html=True))
