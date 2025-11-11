@@ -1,15 +1,28 @@
 from fastapi import APIRouter, Query
-from probedge.storage import masters as mstore
-router = APIRouter(prefix="/api", tags=["matches"])
-@router.get("/matches")
-def get_matches(symbol: str = Query(...), ot: str | None = Query(None), ol: str | None = Query(None), pdc: str | None = Query(None)):
-    df = mstore.read(symbol)
-    if df.empty: return {"symbol": symbol, "dates": [], "rows": 0}
-    # case-insensitive column map
-    cols = {c.lower(): c for c in df.columns}
-    if ot and "openingtrend" in cols: df = df[df[cols["openingtrend"]].astype(str).str.upper()==ot.upper()]
-    if ol and "openlocation" in cols: df = df[df[cols["openlocation"]].astype(str).str.upper()==ol.upper()]
-    if pdc and "prevdaycontext" in cols: df = df[df[cols["prevdaycontext"]].astype(str).str.upper()==pdc.upper()]
-    # assume first column is date
-    dates = df.iloc[:1000][df.columns[0]].astype(str).tolist() if not df.empty else []
-    return {"symbol": symbol, "dates": dates, "rows": len(df)}
+from typing import Optional
+from probedge.storage import masters
+
+router = APIRouter()
+
+@router.get("/api/matches")
+def get_matches(
+    symbol: str = Query(...),
+    ot: Optional[str] = Query(default=None),
+    ol: Optional[str] = Query(default=None),
+    pdc: Optional[str] = Query(default=None)
+):
+    df = masters.read(symbol)
+    if df is None or len(df) == 0:
+        return {"dates": [], "rows": []}
+
+    filt = [True] * len(df)
+    if "OpeningTrend" in df.columns and ot:
+        filt = (df["OpeningTrend"].astype(str).str.upper() == ot.upper())
+    if "OpenLocation" in df.columns and ol:
+        filt = filt & (df["OpenLocation"].astype(str).str.upper() == ol.upper())
+    if "PrevDayContext" in df.columns and pdc:
+        filt = filt & (df["PrevDayContext"].astype(str).str.upper() == pdc.upper())
+
+    sub = df[filt]
+    dates = sub["date"].astype(str).tolist() if "date" in sub.columns else []
+    return {"dates": dates, "rows": sub.to_dict(orient="records")}

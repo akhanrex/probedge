@@ -1,4 +1,3 @@
-# ops/kite_auth_server.py
 import os, re
 from pathlib import Path
 from fastapi import FastAPI
@@ -21,7 +20,6 @@ app = FastAPI()
 kite = KiteConnect(api_key=API_KEY)
 
 def _upsert_env_line(text: str, key: str, value: str) -> str:
-    # ensures KEY=value exists (replace if present, append otherwise)
     lines = [] if not text else text.splitlines()
     pat = re.compile(rf"^{re.escape(key)}=")
     found = False
@@ -38,7 +36,7 @@ def _upsert_env_line(text: str, key: str, value: str) -> str:
 
 @app.get("/")
 def index():
-    url = kite.login_url()  # must match Redirect URL set in Kite developer console
+    url = kite.login_url()
     html = f"""
     <h2>Kite Auth</h2>
     <p>Redirect must be <code>{REDIRECT}</code> in your Kite app settings.</p>
@@ -54,21 +52,21 @@ def callback(request_token: str = ""):
         sess = kite.generate_session(request_token, api_secret=API_SECRET)
         access = sess["access_token"]
 
-        # 1) Save clean token file
         (OUT / "kite_access_token.txt").write_text(access)
 
-        # 2) Update .env so next processes auto-pick it
         env_txt = ENV.read_text() if ENV.exists() else ""
-        env_txt = _upsert_env_line(env_txt, "KITE_API_KEY", API_KEY)
-        env_txt = _upsert_env_line(env_txt, "KITE_API_SECRET", API_SECRET)
-        env_txt = _upsert_env_line(env_txt, "KITE_REDIRECT_URL", REDIRECT)
-        env_txt = _upsert_env_line(env_txt, "KITE_ACCESS_TOKEN", access)
+        for k,v in [
+            ("KITE_API_KEY", API_KEY),
+            ("KITE_API_SECRET", API_SECRET),
+            ("KITE_REDIRECT_URL", REDIRECT),
+            ("KITE_ACCESS_TOKEN", access),
+        ]:
+            env_txt = _upsert_env_line(env_txt, k, v)
         ENV.write_text(env_txt)
 
-        # 3) Show copy-paste exports for current shell session
         html = f"""
         <h3>Success</h3>
-        <p>ACCESS_TOKEN captured and written to <code>.env</code> and <code>data/diagnostics/kite_access_token.txt</code>.</p>
+        <p>ACCESS_TOKEN saved to <code>.env</code> and <code>data/diagnostics/kite_access_token.txt</code>.</p>
         <p>For this terminal session, run:</p>
         <pre>export KITE_API_KEY={API_KEY}
 export KITE_API_SECRET={API_SECRET}
