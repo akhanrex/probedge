@@ -1,29 +1,25 @@
-from __future__ import annotations
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from probedge.infra.settings import SETTINGS
+from apps.api.routes import config as config_route
+from apps.api.routes import tm5 as tm5_route
+from apps.api.routes import matches as matches_route
+# (Other routes like journal/state/plan will be added in later phases)
 
-from apps.api.routes import config, tm5, matches, journal, plan, state, superpath
+app = FastAPI(title="ProbEdge API")
 
-app = FastAPI(title="Probedge API", version="0.1.0")
-
-# CORS (allow localhost by default)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if SETTINGS.allowed_origins == ["*"] else SETTINGS.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(config.router)
-app.include_router(tm5.router)
-app.include_router(matches.router)
-app.include_router(journal.router)
-app.include_router(plan.router)
-app.include_router(state.router)
-app.include_router(superpath.router)
+app.include_router(config_route.router)
+app.include_router(tm5_route.router)
+app.include_router(matches_route.router)
 
-@app.get("/api/health")
-def health():
-    return {"ok": True}
+if __name__ == "__main__":
+    uvicorn.run("apps.api.main:app", host="0.0.0.0", port=9002, reload=True)
