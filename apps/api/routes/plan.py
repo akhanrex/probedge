@@ -1,5 +1,26 @@
 # apps/api/routes/plan.py
 from fastapi import APIRouter, HTTPException, Query
+
+
+def _to_naive_date_series(s):
+    import pandas as pd
+    dt = pd.to_datetime(s, errors="coerce")
+    try:
+        # If tz-aware, drop tz
+        dt = dt.dt.tz_localize(None)
+    except Exception:
+        pass
+    return dt.dt.normalize()
+
+def _to_naive_date(ts):
+    import pandas as pd
+    d = pd.to_datetime(ts, errors="coerce")
+    try:
+        d = d.tz_localize(None)
+    except Exception:
+        pass
+    return d.normalize()
+
 from probedge.infra.settings import SETTINGS
 import pandas as pd, numpy as np, math, os
 from datetime import time as dtime
@@ -63,105 +84,11 @@ def _slice(df_day, m0, m1):
     m = (df_day["_mins"] >= m0) & (df_day["_mins"] <= m1)
     return df_day.loc[m, ["DateTime","Open","High","Low","Close","Date"]]
 
-# ==== core tags (same as batch) ====
-def _overlap_score(df):
-    if df is None or len(df) < 2: return 0.0
-    hi, lo = df["High"].to_numpy(float), df["Low"].to_numpy(float)
-    ov = []
-    for i in range(1, len(df)):
-        num = max(0.0, min(hi[i], hi[i-1]) - max(lo[i], lo[i-1]))
-        den = max(1e-9, (max(hi[i], hi[i-1]) - min(lo[i], lo[i-1])))
-        ov.append(num/den)
-    return float(np.mean(ov)) if ov else 0.0
-
-def _dir_count(df): return int((df["Close"]>df["Open"]).sum() - (df["Close"]<df["Open"]).sum())
-
-TH_MOVE=0.35; TH_RANGE=0.80; TH_TINY_MOVE=0.30; TH_POS_TOP=0.60; TH_POS_BOTTOM=0.40; TH_DIR=2; TH_OVERLAP=0.50
-def compute_openingtrend_robust(df_day):
-    win = _slice(df_day, 9*60+15, 9*60+40)
-    if win.empty: return "TR"
-    win = win.sort_values("DateTime")
-    O0=float(win["Open"].iloc[0]); Cn=float(win["Close"].iloc[-1])
-    Hmax=float(win["High"].max()); Lmin=float(win["Low"].min())
-    move_pct = 100.0*(Cn-O0)/max(1e-9,O0)
-    range_pct= 100.0*(Hmax-Lmin)/max(1e-9,O0)
-    pos=0.5 if Hmax<=Lmin else (Cn-Lmin)/(Hmax-Lmin)
-    dcount=_dir_count(win); ovl=_overlap_score(win)
-    if (range_pct<TH_RANGE) and (abs(move_pct)<TH_TINY_MOVE) and (ovl>TH_OVERLAP): return "TR"
-    v_dist= 1 if move_pct>=+TH_MOVE else (-1 if move_pct<=-TH_MOVE else 0)
-    v_pos = 1 if pos>=TH_POS_TOP else (-1 if pos<=TH_POS_BOTTOM else 0)
-    v_pers= 1 if dcount>=TH_DIR else (-1 if dcount<=-TH_DIR else 0)
-    S=v_dist+v_pos+v_pers
-    return "BULL" if S>=+2 else ("BEAR" if S<=-2 else "TR")
-
-TH_NARROW=1.00; TH_BODY_STRONG=0.45; TH_BODY_WEAK=0.25; TH_CLV_BULL=0.65; TH_CLV_BEAR=0.35
-def compute_prevdaycontext_robust(prev_O, prev_H, prev_L, prev_C):
-    H,L,O,C=float(prev_H),float(prev_L),float(prev_O),float(prev_C)
-    rng=max(1e-9,H-L); range_pct=100.0*rng/max(1e-9,C)
-    body_frac=abs(C-O)/rng if rng>0 else 0.0; clv=(C-L)/rng if rng>0 else 0.5
-    if (range_pct<=TH_NARROW) or (body_frac<=TH_BODY_WEAK): return "TR"
-    if (clv>=TH_CLV_BULL) and (body_frac>=TH_BODY_STRONG): return "BULL"
-    if (clv<=TH_CLV_BEAR) and (body_frac>=TH_BODY_STRONG): return "BEAR"
-    return "TR"
-
-def compute_openlocation(day_open, prev_h, prev_l):
-    if not np.isfinite(day_open) or not np.isfinite(prev_h) or not np.isfinite(prev_l) or prev_h<=prev_l: return ""
-    rng=prev_h-prev_l; o=float(day_open)
-    if o < prev_l: return "OBR"
-    if o <= prev_l + 0.3*rng: return "OOL"
-    if o > prev_h: return "OAR"
-    if o >= prev_h - 0.3*rng: return "OOH"
-    return "OIM"
-
-# ==== pick logic (same as batch) ====
-def _freq_pick(day, master, lookback_years=6):
-    mrow = master.loc[master["Date"] == day]
-    if mrow.empty: return "ABSTAIN", 0, "missing master row", "L0", 0,0,0, np.nan
-    def g(col):
-        try: return str(mrow[col].iloc[0]).strip().upper()
-        except: return ""
-    otoday, ol_today, pdc_today = g("OpeningTrend"), g("OpenLocation"), g("PrevDayContext")
-    base = master[(master["Date"] < day) & (master["Date"] >= (pd.to_datetime(day) - pd.DateOffset(years=lookback_years)))].copy()
-
-    def _match(df, use_ol, use_pdc):
-        m = df[df["OpeningTrend"] == otoday] if "OpeningTrend" in df.columns else df
-        if use_ol and ("OpenLocation" in m.columns) and ol_today: m = m[m["OpenLocation"] == ol_today]
-        if use_pdc and ("PrevDayContext" in m.columns) and pdc_today: m = m[m["PrevDayContext"] == pdc_today]
-        return m
-
-    def decide(df):
-        lab = df.get("Result", pd.Series(dtype=str)).astype(str).str.strip().str.upper()
-        lab = lab[(lab=="BULL") | (lab=="BEAR")]
-        b = int((lab=="BULL").sum()); r = int((lab=="BEAR").sum()); n = b+r
-        if n==0: return "ABSTAIN",0,b,r,n,np.nan
-        bull_pct=100.0*b/n; bear_pct=100.0*r/n; gap=abs(bull_pct-bear_pct)
-        pick = "BULL" if b>r else ("BEAR" if r>b else "ABSTAIN")
-        conf = int(round(100.0 * max(b, r) / n))
-        return pick, conf, b, r, n, gap
-
-    level, hist = "L3", _match(base, True, True)
-    if len(hist) < MIN3: level, hist = "L2", _match(base, True, False)
-    if len(hist) < (MIN2 if level=="L2" else MIN3): level, hist = "L1", _match(base, False, False)
-    if len(hist) < (MIN1 if level=="L1" else (MIN2 if level=="L2" else MIN3)): level, hist = "L0", base
-    pick, conf, b, r, n, gap = decide(hist)
-
-    # try broaden if weak edge
-    def try_level(df, lvl):
-        p,c,B,R,N,G = decide(df)
-        return (p,c,B,R,N,G,lvl,df)
-    if not np.isnan(gap) and gap < EDGE_PP:
-        if level=="L3":
-            p2,c2,B2,R2,N2,G2,lv2,h2 = try_level(_match(base, True, False), "L2")
-            if N2>=MIN2 and (not np.isnan(G2) and G2>=EDGE_PP): pick,conf,b,r,n,gap,level,hist = p2,c2,B2,R2,N2,G2,lv2,h2
-        if (level in ("L3","L2")) and (gap<EDGE_PP):
-            p1,c1,B1,R1,N1,G1,lv1,h1 = try_level(_match(base, False, False), "L1")
-            if N1>=MIN1 and (not np.isnan(G1) and G1>=EDGE_PP): pick,conf,b,r,n,gap,level,hist = p1,c1,B1,R1,N1,G1,lv1,h1
-        if (level in ("L3","L2","L1")) and (gap<EDGE_PP):
-            p0,c0,B0,R0,N0,G0,lv0,h0 = try_level(base, "L0")
-            if N0>=MIN0 and (not np.isnan(G0) and G0>=EDGE_PP): pick,conf,b,r,n,gap,level,hist = p0,c0,B0,R0,N0,G0,lv0,h0
-
-    # display gating
-    req = {"L3":MIN3,"L2":MIN2,"L1":MIN1,"L0":MIN0}[level]
+# ==== core tags = {
+        "OpeningTrend": g("OpeningTrend"),
+        "OpenLocation": g("OpenLocation"),
+        "PrevDayContext": g("PrevDayContext"),
+    }[level]
     display_pick = pick if (n>=req and (not np.isnan(gap) and gap>=EDGE_PP) and conf>=CONF_FLOOR) else "ABSTAIN"
     if REQUIRE_OT_ALIGN and display_pick!="ABSTAIN" and otoday in ("BULL","BEAR") and display_pick!=otoday:
         display_pick = "ABSTAIN"
@@ -190,8 +117,9 @@ def get_plan(symbol: str = Query(..., min_length=1)):
     if tm5.empty: raise HTTPException(409, "tm5 empty")
 
     # Use the last available trading day in file (IST-naive)
-    day = pd.to_datetime(tm5["Date"].max()).normalize()
-    dfd = tm5[tm5["Date"].eq(day)].copy().sort_values("DateTime")
+    last_dt = pd.to_datetime(tm5['Date'].max(), errors='coerce')
+    day = _to_naive_date(last_dt)
+dfd = tm5[tm5["Date"].eq(day)].copy().sort_values("DateTime")
     if dfd.empty: raise HTTPException(409, "no bars for latest day")
 
     # Require a complete ORB and the 09:40 bar to exist
@@ -214,8 +142,9 @@ def get_plan(symbol: str = Query(..., min_length=1)):
     pdc = ""
     # derive prev day OHLC for PDC
     try:
-        prev_day = pd.to_datetime(day) - pd.Timedelta(days=1)
-        prev_df = tm5[tm5["Date"].eq(prev_day)].copy().sort_values("DateTime")
+        prev_last_dt = pd.to_datetime(tm5['Date'].max(), errors='coerce')
+    day = _to_naive_date(last_dt)
+prev_df = tm5[tm5["Date"].eq(prev_day)].copy().sort_values("DateTime")
         if not prev_df.empty:
             pdc = compute_prevdaycontext_robust(prev_df["Open"].iloc[0], prev_df["High"].max(),
                                                 prev_df["Low"].min(), prev_df["Close"].iloc[-1])
