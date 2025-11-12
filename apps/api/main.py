@@ -7,12 +7,14 @@ from .routes import config, journal, kill, matches, state, tm5
 from .routes import state_file
 from apps.api.routes import control as control_route
 from apps.api.routes import state_stream as state_stream_route
+from apps.api.routes import plan as plan_route
 from .ws import live as wslive
 app = FastAPI(title="Probedge API")
 app.include_router(config.router)
 app.include_router(tm5.router)
 app.include_router(matches.router)
 app.include_router(state_file.router)
+app.include_router(plan_route.router)
 # # app.include_router(state.router)  # disabled  # disabled in favor of file-backed state
 app.include_router(journal.router)
 app.include_router(kill.router)
