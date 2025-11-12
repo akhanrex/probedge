@@ -1,20 +1,19 @@
-from __future__ import annotations
 from fastapi import APIRouter
-from apps.infra.settings import SETTINGS
+from probedge.infra.settings import SETTINGS
 
-router = APIRouter(prefix="/api", tags=["config"])
+router = APIRouter()
 
-@router.get("/config")
+@router.get("/api/config")
 def get_config():
     return {
         "mode": SETTINGS.mode,
-        "bar_seconds": SETTINGS.bar_seconds,
         "symbols": SETTINGS.symbols,
         "paths": {
-            "intraday_patterns": SETTINGS.paths.intraday_patterns,
-            "master_patterns": SETTINGS.paths.master_patterns,
-            "journal_csv": SETTINGS.paths.journal_csv,
-            "state_json": SETTINGS.paths.state_json,
+            "intraday": SETTINGS.paths.intraday,
+            "masters": SETTINGS.paths.masters,
+            "journal": SETTINGS.paths.journal,
+            "state": SETTINGS.paths.state,
         },
-        "data_dir": SETTINGS.data_dir,
+        "risk_budget_rs": SETTINGS.risk_budget_rs,  # test=1k, else default=10k
+        "allowed_origins": SETTINGS.allowed_origins,
     }
