@@ -1,5 +1,7 @@
+# config/frequency.yaml
+
 symbols:
-  - TMPV
+  - TATAMOTORS
   - ETERNAL
   - JIOFIN
   - HAL
@@ -10,18 +12,10 @@ symbols:
   - BAJAJHFL
   - SWIGGY
 
+# Canonical paths. All writes go here. Readers may allow legacy fallbacks.
 paths:
-  # 5-minute intraday CSVs used by /api/tm5
-  intraday: "data/intraday/{sym}_5minute.csv"
-
-  # Master files used by /api/matches
-  masters: "data/masters/{sym}_5MINUTE_MASTER.csv"
-
-  # Latest tick snapshots (legacy dashboard layout)
-  ticks: "legacy/stock-market-amir-dashboard-main/stock-market-amir-dashboard-main/data/latest/{sym}.csv"
-
-  # Journal CSV (legacy dashboard layout)
-  journal: "legacy/stock-market-amir-dashboard-main/stock-market-amir-dashboard-main/data/journal/Journal.csv"
-
-  # Live state file
-  state: "live_state.json"
+  masters:   "data/masters/{sym}_5MINUTE_MASTER.csv"
+  intraday:  "data/intraday/{sym}_5minute.csv"
+  ticks:     "data/ticks/{date}/{sym}.parquet"
+  journal:   "data/journal/journal.csv"
+  state:     "data/state/live_state.json"
