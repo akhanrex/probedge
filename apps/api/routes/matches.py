@@ -1,68 +1,36 @@
-from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional, List
-import numpy as np
+import pandas as pd
+from probedge.storage.resolver import locate_for_read
 
-from apps.storage.tm5 import read_master
+router = APIRouter()
 
-router = APIRouter(prefix="/api", tags=["matches"])
-
-@router.get("/matches")
+@router.get("/api/matches")
 def get_matches(
-    symbol: str = Query(..., min_length=1),
-    ot: Optional[str] = Query(None),
-    ol: Optional[str] = Query(None),
-    pdc: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=10000),
+    symbol: str = Query(...),
+    ot: str = Query(..., description="OpeningTrend: BULL|BEAR|TR"),
+    ol: str = Query("", description="OpenLocation: OAR|OOH|OOL|OIM|OBR (optional)"),
+    pdc: str = Query("", description="PrevDayContext: BULL|BEAR|TR (optional)")
 ):
-    sym = symbol.strip().upper()
-    try:
-        df = read_master(sym)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    # Normalize column names we care about
-    cols = {c.lower(): c for c in df.columns}
-    def getcol(name: str) -> Optional[str]:
-        for cand in [name, name.upper(), name.lower()]:
-            if cand in df.columns: 
-                return cand
-        # fallback mapping
-        for k in cols:
-            if k.startswith(name.lower()):
-                return cols[k]
-        return None
-
-    c_ot = getcol("OpeningTrend")
-    c_ol = getcol("OpenLocation")
-    c_pdc = getcol("PrevDayContext")
-    if not all([c_ot, c_ol, c_pdc]):
-        raise HTTPException(409, "Master is missing one of: OpeningTrend, OpenLocation, PrevDayContext")
-
-    m = df.copy()
-    if ot: m = m[m[c_ot].astype(str).str.upper() == ot.upper()]
-    if ol: m = m[m[c_ol].astype(str).str.upper() == ol.upper()]
-    if pdc: m = m[m[c_pdc].astype(str).str.upper() == pdc.upper()]
-
-    m = m.sort_values("Date").tail(limit)
-
-    # Basic counts by Result (if exists)
-    res_col = None
-    for c in ["Result","Direction","Side","Pick"]:
-        if c in m.columns:
-            res_col = c; break
-    b = r = 0
-    if res_col:
-        b = int((m[res_col].astype(str).str.upper() == "BULL").sum())
-        r = int((m[res_col].astype(str).str.upper() == "BEAR").sum())
-    n = int(len(m))
-    pp_gap = (b - r) / max(1, n) * 100.0
-
-    rows = m.to_dict(orient="records")
+    path = locate_for_read("masters", symbol)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"MASTER not found for {symbol}")
+    m = pd.read_csv(path)
+    def norm(x): return str(x).strip().upper()
+    m["OpeningTrend"] = m["OpeningTrend"].astype(str).str.upper().str.strip()
+    if ol:
+        m = m[m["OpenLocation"].astype(str).str.upper().str.strip() == norm(ol)]
+    if pdc:
+        m = m[m["PrevDayContext"].astype(str).str.upper().str.strip() == norm(pdc)]
+    m = m[m["OpeningTrend"] == norm(ot)]
+    # Result filter: only BULL/BEAR for frequency stats
+    lab = m["Result"].astype(str).str.upper().str.strip()
+    m = m[lab.isin(["BULL", "BEAR"])]
+    dates = list(pd.to_datetime(m["Date"], errors="coerce").dropna().astype(str).unique())
     return {
-        "symbol": sym,
-        "filters": {"ot": ot, "ol": ol, "pdc": pdc},
-        "counts": {"bull": b, "bear": r, "n": n, "edge_pp": pp_gap},
-        "dates": [str(d) for d in m["Date"].tolist()],
-        "rows": rows,
+        "symbol": symbol.upper(),
+        "ot": norm(ot),
+        "ol": norm(ol) if ol else "",
+        "pdc": norm(pdc) if pdc else "",
+        "dates": dates,
+        "rows": m.to_dict(orient="records"),
     }
