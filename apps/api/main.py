@@ -5,6 +5,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from .routes import config, journal, kill, matches, state, tm5
 from .routes import state_file
+from apps.api.routes import control as control_route
+from apps.api.routes import state_stream as state_stream_route
 from .ws import live as wslive
 app = FastAPI(title="Probedge API")
 app.include_router(config.router)
@@ -17,6 +19,8 @@ app.include_router(kill.router)
 app.include_router(wslive.router)
 app.include_router(tm5_route.router)
 app.include_router(matches_route.router)
+app.include_router(control_route.router)
+app.include_router(state_stream_route.router)
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 @app.get("/api/health")
 def health(): return {"ok": True}
