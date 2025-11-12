@@ -23,7 +23,12 @@ class _FrequencyConfig(BaseModel):
     paths: _Paths
 
 class _Env(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # Accept .env and IGNORE any extra keys so your old env never breaks
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     MODE: str = Field(default=MODE_PAPER)
     DATA_DIR: str = Field(default="./")
@@ -32,18 +37,41 @@ class _Env(BaseSettings):
     RISK_RS_DEFAULT: int = Field(default=10000)  # live/paper default
     RISK_RS_TEST: int = Field(default=1000)      # test default
 
+    # Legacy / OMS related keys (we accept & keep them)
+    BAR_SECONDS: int = Field(default=300)
+    SLIPPAGE_CAP_PCT: float = Field(default=0.0005)
+    NUDGE_PCT: float = Field(default=0.0003)
+    CLIENT_ID_PREFIX: str = Field(default="PROB")
+
     # CORS / Ops
     ALLOWED_ORIGINS: str = Field(default="*")
 
+    # Kite keys (for later phases)
+    KITE_API_KEY: str = Field(default="")
+    KITE_API_SECRET: str = Field(default="")
+    KITE_ACCESS_TOKEN: str = Field(default="")
+
 class Settings(BaseModel):
+    # Core
     mode: str
     data_dir: Path
     symbols: List[str]
     paths: _Paths
-    allowed_origins: List[str]
+
+    # Risk
     risk_rs_default: int
     risk_rs_test: int
 
+    # OMS/Runtime knobs we will use in later phases
+    bar_seconds: int
+    slippage_cap_pct: float
+    nudge_pct: float
+    client_id_prefix: str
+
+    # Ops
+    allowed_origins: List[str]
+
+    # Derived — read-only
     @property
     def risk_budget_rs(self) -> int:
         """Current session’s daily risk budget driven by mode (test vs paper/live)."""
@@ -85,13 +113,24 @@ def load_settings() -> Settings:
             seen.add(u)
 
     return Settings(
+        # Core
         mode=env.MODE.lower().strip(),
         data_dir=Path(env.DATA_DIR).resolve(),
         symbols=symbols,
         paths=freq.paths,
-        allowed_origins=_split_origins(env.ALLOWED_ORIGINS),
+
+        # Risk
         risk_rs_default=int(env.RISK_RS_DEFAULT),
         risk_rs_test=int(env.RISK_RS_TEST),
+
+        # OMS/Runtime
+        bar_seconds=int(env.BAR_SECONDS),
+        slippage_cap_pct=float(env.SLIPPAGE_CAP_PCT),
+        nudge_pct=float(env.NUDGE_PCT),
+        client_id_prefix=str(env.CLIENT_ID_PREFIX),
+
+        # Ops
+        allowed_origins=_split_origins(env.ALLOWED_ORIGINS),
     )
 
 # Singleton
