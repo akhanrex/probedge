@@ -16,3 +16,5 @@ paths:
   ticks:    "data/ticks/{date}/{sym}.parquet"
   journal:  "data/journal/journal.csv"
   state:    "data/state/live_state.json"
+  journal: "legacy/stock-market-amir-dashboard-main/stock-market-amir-dashboard-main/data/journal/Journal.csv"
+  state: "live_state.json"
