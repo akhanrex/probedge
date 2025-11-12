@@ -1,0 +1,49 @@
+{
+  "heartbeat": "2025-11-12T19:02:47+05:30",
+  "quotes": {
+    "TMPV": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "ETERNAL": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "JIOFIN": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "HAL": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "LICI": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "BAJFINANCE": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "JSWENERGY": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "RECLTD": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "BAJAJHFL": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    },
+    "SWIGGY": {
+      "DateTime": "2025-11-11T12:20:00+05:30",
+      "Close": 173.0
+    }
+  },
+  "armed": false,
+  "symbol": "TMPV",
+  "side": "BUY",
+  "qty": 1
+}

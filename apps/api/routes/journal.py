@@ -1,31 +1,14 @@
-
+from __future__ import annotations
 from fastapi import APIRouter, HTTPException
-from probedge.infra.settings import SETTINGS
-import csv, os
+from apps.storage.tm5 import read_journal
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["journal"])
 
-@router.get("/api/journal/daily")
-def journal_daily():
-    path = SETTINGS.paths.journal
-    if not path:
-        # Settings loaded but journal key absent → mis-config
-        raise HTTPException(status_code=500, detail="journal path not set in settings")
-
-    if not os.path.exists(path):
-        # Helpful 404 with the path we looked at and CWD
-        raise HTTPException(status_code=404, detail=f"Journal not found: {path} (cwd={os.getcwd()})")
-
+@router.get("/journal/daily")
+def get_journal_daily():
     try:
-        rows = []
-        with open(path, newline="") as f:
-            sniffer = csv.Sniffer()
-            sample = f.read(2048)
-            f.seek(0)
-            dialect = sniffer.sniff(sample) if sample else csv.excel
-            reader = csv.DictReader(f, dialect=dialect)
-            for r in reader:
-                rows.append(r)
-        return {"source": path, "rows": rows}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"journal error: {e}")
+        df = read_journal()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    rows = df.to_dict(orient="records")
+    return {"count": len(rows), "rows": rows}

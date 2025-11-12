@@ -1,19 +1,17 @@
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional, List
+from typing import Optional
 import numpy as np
-
 from apps.storage.tm5 import read_master
 
-router = APIRouter(prefix="/api", tags=["matches"])
+router = APIRouter(prefix="/api", tags=["superpath"])
 
-@router.get("/matches")
-def get_matches(
+@router.get("/superpath")
+def superpath(
     symbol: str = Query(..., min_length=1),
     ot: Optional[str] = Query(None),
     ol: Optional[str] = Query(None),
     pdc: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=10000),
 ):
     sym = symbol.strip().upper()
     try:
@@ -21,48 +19,35 @@ def get_matches(
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    # Normalize column names we care about
     cols = {c.lower(): c for c in df.columns}
-    def getcol(name: str) -> Optional[str]:
-        for cand in [name, name.upper(), name.lower()]:
-            if cand in df.columns: 
-                return cand
-        # fallback mapping
+    def col(name: str):
+        for c in [name, name.upper(), name.lower()]:
+            if c in df.columns: return c
         for k in cols:
             if k.startswith(name.lower()):
                 return cols[k]
         return None
 
-    c_ot = getcol("OpeningTrend")
-    c_ol = getcol("OpenLocation")
-    c_pdc = getcol("PrevDayContext")
-    if not all([c_ot, c_ol, c_pdc]):
-        raise HTTPException(409, "Master is missing one of: OpeningTrend, OpenLocation, PrevDayContext")
-
+    c_ot = col("OpeningTrend")
+    c_ol = col("OpenLocation")
+    c_pdc = col("PrevDayContext")
     m = df.copy()
     if ot: m = m[m[c_ot].astype(str).str.upper() == ot.upper()]
     if ol: m = m[m[c_ol].astype(str).str.upper() == ol.upper()]
     if pdc: m = m[m[c_pdc].astype(str).str.upper() == pdc.upper()]
 
-    m = m.sort_values("Date").tail(limit)
-
-    # Basic counts by Result (if exists)
     res_col = None
     for c in ["Result","Direction","Side","Pick"]:
-        if c in m.columns:
-            res_col = c; break
+        if c in m.columns: res_col = c; break
     b = r = 0
     if res_col:
         b = int((m[res_col].astype(str).str.upper() == "BULL").sum())
         r = int((m[res_col].astype(str).str.upper() == "BEAR").sum())
     n = int(len(m))
-    pp_gap = (b - r) / max(1, n) * 100.0
+    edge_pp = (b - r) / max(1, n) * 100.0
 
-    rows = m.to_dict(orient="records")
-    return {
-        "symbol": sym,
+    meta = {
         "filters": {"ot": ot, "ol": ol, "pdc": pdc},
-        "counts": {"bull": b, "bear": r, "n": n, "edge_pp": pp_gap},
-        "dates": [str(d) for d in m["Date"].tolist()],
-        "rows": rows,
+        "counts": {"bull": b, "bear": r, "n": n, "edge_pp": edge_pp},
     }
+    return {"symbol": sym, "meta": meta}

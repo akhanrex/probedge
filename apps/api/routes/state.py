@@ -1,12 +1,13 @@
+from __future__ import annotations
 from fastapi import APIRouter, HTTPException
-from pathlib import Path
-import json
+from apps.storage.tm5 import read_state_json
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["state"])
 
-@router.get("/api/state")
-def api_state():
-    f = Path("data/state/live_state.json")
-    if not f.exists():
-        raise HTTPException(404, "state not found")
-    return json.loads(f.read_text())
+@router.get("/state")
+def get_state():
+    try:
+        s = read_state_json()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return s

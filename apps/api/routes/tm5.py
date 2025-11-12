@@ -1,37 +1,27 @@
-from fastapi import APIRouter, Query
+from __future__ import annotations
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional
 import numpy as np
-from probedge.storage import tm5 as tm5_store
 
-router = APIRouter()
+from apps.storage.tm5 import read_tm5
+
+router = APIRouter(prefix="/api", tags=["tm5"])
 
 def _py_sanitize(v):
     if v is None:
         return None
+    # Convert numpy types to Python scalars for JSON
     if isinstance(v, (np.floating, np.integer, np.bool_)):
         return v.item()
-    try:
-        if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
-            return None
-    except Exception:
-        pass
     return v
 
-def _json_records(df):
-    df = df.replace([np.inf, -np.inf], np.nan)
-    out = []
-    for rec in df.to_dict(orient="records"):
-        out.append({k: _py_sanitize(v) for k, v in rec.items()})
-    return out
-
-@router.get("/api/tm5")
-def get_tm5(
-    symbol: str = Query(..., description="symbol (TMPV etc.)"),
-    limit: int = Query(None, ge=1, le=250_000, description="optional cap on rows from top")
-):
-    df = tm5_store.read(symbol)
-    if df is None or len(df) == 0:
-        return {{"symbol": symbol, "rows": 0, "data": []}}
-    if limit:
-        df = df.head(limit)
-    data = _json_records(df)
-    return {{"symbol": symbol, "rows": len(data), "data": data}}
+@router.get("/tm5")
+def get_tm5(symbol: str = Query(..., min_length=1), limit: Optional[int] = Query(300, ge=1)):
+    sym = symbol.strip().upper()
+    try:
+        df = read_tm5(sym)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    rows = df.tail(limit).to_dict(orient="records")
+    rows = [{k: _py_sanitize(v) for k, v in r.items()} for r in rows]
+    return {"symbol": sym, "rows": rows, "count": len(rows)}

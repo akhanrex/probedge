@@ -1,205 +1,157 @@
-# apps/api/routes/plan.py
+from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
+import numpy as np
+import pandas as pd
+from typing import Tuple, Optional
 
+from apps.storage.tm5 import read_tm5, read_master
+from apps.utils.dates import to_minutes, in_range, SESSION_START, ORB_END
 
-def _to_naive_date_series(s):
-    import pandas as pd
-    dt = pd.to_datetime(s, errors="coerce")
-    try:
-        # If tz-aware, drop tz
-        dt = dt.dt.tz_localize(None)
-    except Exception:
-        pass
-    return dt.dt.normalize()
+router = APIRouter(prefix="/api", tags=["plan"])
 
-def _to_naive_date(ts):
-    import pandas as pd
-    d = pd.to_datetime(ts, errors="coerce")
-    try:
-        d = d.tz_localize(None)
-    except Exception:
-        pass
-    return d.normalize()
-
-from probedge.infra.settings import SETTINGS
-import pandas as pd, numpy as np, math, os
-from datetime import time as dtime
-
-router = APIRouter()
-
-# ==== batch constants (unchanged) ====
-T0 = dtime(9, 40); T1 = dtime(15, 5)
-SESSION_START = dtime(9, 15); ORB_END = dtime(9, 35)
-T0_M = 9*60 + 40; T1_M = 15*60 + 5; S_M = 9*60 + 15; E_M = 9*60 + 35
-
-EDGE_PP = 8.0
-CONF_FLOOR = 55
-MIN3, MIN2, MIN1, MIN0 = 8, 6, 4, 3
+EDGE_PP = 5.0          # edge threshold in percentage points
+CONF_FLOOR = 55.0      # minimum confidence
 REQUIRE_OT_ALIGN = True
-CLOSE_PCT = 0.0025         # 0.25% of entry
-CLOSE_FR_ORB = 0.20        # 20% of ORB range
-DEFAULT_RISK_RS = 10000.0  # can override via env RISK_RS
+CLOSE_PCT = 0.0025     # 'close to' threshold as % of entry
+CLOSE_FR_ORB = 0.25    # or 25% of ORB range
 
-# ==== robust 5-min reader (same mapping as batch) ====
-def _read_tm5(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df.columns = [str(c).replace("\ufeff","").strip() for c in df.columns]
-    # find DateTime
-    lc2orig = {c.lower(): c for c in df.columns}
-    dt = None
-    for key in ("datetime","date_time","timestamp","date"):
-        if key in lc2orig:
-            dt = pd.to_datetime(df[lc2orig[key]], errors="coerce"); break
-    if dt is None and ("date" in lc2orig and "time" in lc2orig):
-        dt = pd.to_datetime(df[lc2orig["date"]].astype(str)+" "+df[lc2orig["time"]].astype(str), errors="coerce")
-    if dt is None:
-        raise ValueError(f"No DateTime in {path}")
-    if "DateTime" in df.columns: df["DateTime"] = dt
-    else: df.insert(0, "DateTime", dt)
+def _orb(df: pd.DataFrame) -> Tuple[float,float]:
+    mins = to_minutes(df["DateTime"])
+    mask = in_range(mins, SESSION_START, ORB_END)
+    w = df.loc[mask]
+    if w.empty:
+        return np.nan, np.nan
+    return float(w["High"].max()), float(w["Low"].min())
 
-    # map OHLCV
-    def pick(*aliases):
-        for a in aliases:
-            if a in lc2orig: return lc2orig[a]
-        for c in df.columns:
-            if c.lower() in aliases: return c
-        return None
-    m = {
-        "Open": pick("open","o"), "High": pick("high","h"),
-        "Low": pick("low","l"),   "Close": pick("close","c"),
-        "Volume": pick("volume","vol","qty","quantity")
-    }
-    for k,v in m.items():
-        if v and v != k: df.rename(columns={v:k}, inplace=True)
-    for k in ("Open","High","Low","Close","Volume"):
-        if k in df.columns: df[k] = pd.to_numeric(df[k], errors="coerce")
+def _open_location(open_px: float, prev_hi: float, prev_lo: float) -> str:
+    if np.isnan(prev_hi) or np.isnan(prev_lo) or np.isnan(open_px):
+        return "NA"
+    if open_px > prev_hi: return "OOH"  # open outside above range
+    if open_px < prev_lo: return "OOL"  # open outside below range
+    # inside range
+    mid = (prev_hi + prev_lo) / 2.0
+    return "OAR" if abs(open_px - mid) <= (prev_hi - prev_lo) * 0.15 else "OIM"
 
-    df = (df.dropna(subset=["DateTime","Open","High","Low","Close"])
-            .sort_values("DateTime").reset_index(drop=True))
-    df["Date"] = df["DateTime"].dt.normalize()
-    df["_mins"] = df["DateTime"].dt.hour*60 + df["DateTime"].dt.minute
-    return df
+def _opening_trend(df: pd.DataFrame) -> str:
+    # Compare 09:40 close vs 09:15 open; fallback to first/last of first 5 bars
+    mins = to_minutes(df["DateTime"])
+    mask = in_range(mins, SESSION_START, ORB_END)
+    w = df.loc[mask]
+    if len(w) < 2:
+        return "TR"
+    first_open = float(w.iloc[0]["Open"])
+    last_close = float(w.iloc[-1]["Close"])
+    if last_close > first_open: return "BULL"
+    if last_close < first_open: return "BEAR"
+    return "TR"
 
-def _slice(df_day, m0, m1):
-    m = (df_day["_mins"] >= m0) & (df_day["_mins"] <= m1)
-    return df_day.loc[m, ["DateTime","Open","High","Low","Close","Date"]]
+def _prev_day_context(prev_day_df: pd.DataFrame) -> str:
+    if prev_day_df.empty: return "TR"
+    o = float(prev_day_df.iloc[0]["Open"])
+    c = float(prev_day_df.iloc[-1]["Close"])
+    if c > o: return "BULL"
+    if c < o: return "BEAR"
+    return "TR"
 
-# ==== core tags = {
-        "OpeningTrend": g("OpeningTrend"),
-        "OpenLocation": g("OpenLocation"),
-        "PrevDayContext": g("PrevDayContext"),
-    }[level]
-    display_pick = pick if (n>=req and (not np.isnan(gap) and gap>=EDGE_PP) and conf>=CONF_FLOOR) else "ABSTAIN"
-    if REQUIRE_OT_ALIGN and display_pick!="ABSTAIN" and otoday in ("BULL","BEAR") and display_pick!=otoday:
-        display_pick = "ABSTAIN"
+def _is_close(a: float, b: float, entry_px: float, orb_rng: float) -> bool:
+    thr = np.inf
+    parts = []
+    if np.isfinite(entry_px) and entry_px > 0:
+        parts.append(entry_px * CLOSE_PCT)
+    if np.isfinite(orb_rng):
+        parts.append(abs(orb_rng) * CLOSE_FR_ORB)
+    if parts:
+        thr = min(parts)
+    return np.isfinite(a) and np.isfinite(b) and abs(a - b) <= thr
 
-    reason = (f"{level} freq: OT={otoday or '-'}, OL={ol_today or '-'}, PDC={pdc_today or '-'} | "
-              f"BULL={b}, BEAR={r}, N={n}, gap={gap if np.isfinite(gap) else 'NA'}pp, conf={conf}% "
-              f"{'| OT-align' if REQUIRE_OT_ALIGN else ''}")
-    return display_pick, conf, reason, level, b, r, n, gap
-
-def _is_close(a, b, entry_px, orb_rng):
-    thr = np.inf; parts = []
-    if np.isfinite(entry_px) and entry_px>0: parts.append(entry_px*CLOSE_PCT)
-    if np.isfinite(orb_rng): parts.append(abs(orb_rng)*CLOSE_FR_ORB)
-    if parts: thr = min(parts)
-    return np.isfinite(a) and np.isfinite(b) and abs(a-b) <= thr
-
-@router.get("/api/plan")
+@router.get("/plan")
 def get_plan(symbol: str = Query(..., min_length=1)):
     sym = symbol.strip().upper()
-    ip = SETTINGS.paths.intraday.format(sym=sym)
-    mp = SETTINGS.paths.masters.format(sym=sym)
-    if not os.path.exists(ip): raise HTTPException(404, f"tm5 not found: {ip}")
-    if not os.path.exists(mp): raise HTTPException(404, f"master not found: {mp}")
-
-    tm5 = _read_tm5(ip)
-    if tm5.empty: raise HTTPException(409, "tm5 empty")
-
-    # Use the last available trading day in file (IST-naive)
-    last_dt = pd.to_datetime(tm5['Date'].max(), errors='coerce')
-    day = _to_naive_date(last_dt)
-dfd = tm5[tm5["Date"].eq(day)].copy().sort_values("DateTime")
-    if dfd.empty: raise HTTPException(409, "no bars for latest day")
-
-    # Require a complete ORB and the 09:40 bar to exist
-    orb = _slice(dfd, S_M, E_M)
-    if len(orb) < 1: raise HTTPException(409, "ORB not ready")
-    w0940_1505 = _slice(dfd, T0_M, T1_M)
-    if w0940_1505.empty or w0940_1505["DateTime"].iloc[0].hour != 9 or w0940_1505["DateTime"].iloc[0].minute not in (40,):  # guard
-        raise HTTPException(409, "09:40 bar not present")
-
-    # Prev-day high/low from whole tm5
-    daily = tm5.groupby("Date").agg(day_high=("High","max"), day_low=("Low","min")).reset_index().sort_values("Date")
-    dp = daily.copy(); dp["prev_high"]=dp["day_high"].shift(1); dp["prev_low"]=dp["day_low"].shift(1)
-    prev_row = dp[dp["Date"].eq(day)]
-    prev_h = float(prev_row["prev_high"].iloc[0]) if not prev_row.empty else np.nan
-    prev_l = float(prev_row["prev_low"].iloc[0])  if not prev_row.empty else np.nan
-
-    # Tags for today (batch logic)
-    ot = compute_openingtrend_robust(dfd)
-    day_open = float(dfd["Open"].iloc[0]) if len(dfd) else np.nan
-    pdc = ""
-    # derive prev day OHLC for PDC
     try:
-        prev_last_dt = pd.to_datetime(tm5['Date'].max(), errors='coerce')
-    day = _to_naive_date(last_dt)
-prev_df = tm5[tm5["Date"].eq(prev_day)].copy().sort_values("DateTime")
-        if not prev_df.empty:
-            pdc = compute_prevdaycontext_robust(prev_df["Open"].iloc[0], prev_df["High"].max(),
-                                                prev_df["Low"].min(), prev_df["Close"].iloc[-1])
-    except: pass
-    ol = compute_openlocation(day_open, prev_h, prev_l) if np.isfinite(prev_h) and np.isfinite(prev_l) else ""
+        tm5 = read_tm5(sym)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    if tm5.empty:
+        raise HTTPException(409, "tm5 empty")
 
-    # Frequency pick from *historical* master file
-    master = pd.read_csv(mp)
-    master["Date"] = pd.to_datetime(master["Date"]).dt.normalize()
-    pick, conf, reason, level, b, r, n, gap = _freq_pick(day, master)
+    last_date = tm5["Date"].max()
+    prev_date = pd.to_datetime(last_date) - pd.Timedelta(days=1)
 
-    # Entry/SL/T1/T2 (batch SL exactly)
-    entry = float(w0940_1505["Open"].iloc[0])
-    orb_h, orb_l = float(orb["High"].max()), float(orb["Low"].min())
-    rng = max(0.0, orb_h - orb_l)
-    dbl_h, dbl_l = (orb_h + rng, orb_l - rng)
-    orb_rng = (orb_h - orb_l) if (np.isfinite(orb_h) and np.isfinite(orb_l)) else np.nan
+    day_df = tm5[tm5["Date"] == last_date]
+    prev_df = tm5[tm5["Date"] == prev_date.date()]
 
-    if ot=="BULL" and pick=="BULL":
-        stop = prev_l if (np.isfinite(prev_l) and _is_close(orb_l, prev_l, entry, orb_rng)) else orb_l
-    elif ot=="BULL" and pick=="BEAR":
-        stop = dbl_h
-    elif ot=="BEAR" and pick=="BEAR":
-        stop = prev_h if (np.isfinite(prev_h) and _is_close(orb_h, prev_h, entry, orb_rng)) else orb_h
-    elif ot=="BEAR" and pick=="BULL":
-        stop = dbl_l
-    elif ot=="TR" and pick=="BEAR":
-        stop = dbl_h
-    elif ot=="TR" and pick=="BULL":
-        stop = dbl_l
-    else:
-        # includes ABSTAIN → compute a neutral band anyway
-        stop = dbl_l if pick=="BULL" else dbl_h
+    # Compute today's quick tags from tm5
+    prev_hi = float(prev_df["High"].max()) if not prev_df.empty else np.nan
+    prev_lo = float(prev_df["Low"].min()) if not prev_df.empty else np.nan
+    open_px = float(day_df.iloc[0]["Open"]) if not day_df.empty else np.nan
 
-    long_side = (pick=="BULL")
-    risk_per_share = (entry - stop) if long_side else (stop - entry)
-    risk_rs = float(os.getenv("RISK_RS", DEFAULT_RISK_RS))
-    qty = int(math.floor(risk_rs / risk_per_share)) if (np.isfinite(risk_per_share) and risk_per_share>0) else 0
-    t1 = entry + risk_per_share if long_side else entry - risk_per_share
-    t2 = entry + 2*risk_per_share if long_side else entry - 2*risk_per_share
+    otoday = _opening_trend(day_df)
+    ol_today = _open_location(open_px, prev_hi, prev_lo)
+    pdc_today = _prev_day_context(prev_df)
 
-    # final gating as in batch
-    display = pick
-    ready = True
-    if pick=="ABSTAIN" or qty<=0:
-        ready=False
+    # Use master for historical matching stats
+    try:
+        master = read_master(sym)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+    cols = {c.lower(): c for c in master.columns}
+    def col(name: str) -> Optional[str]:
+        for c in [name, name.upper(), name.lower()]:
+            if c in master.columns: return c
+        for k in cols:
+            if k.startswith(name.lower()):
+                return cols[k]
+        return None
+
+    c_ot = col("OpeningTrend")
+    c_ol = col("OpenLocation")
+    c_pdc = col("PrevDayContext")
+    m = master.copy()
+    if c_ot: m = m[m[c_ot].astype(str).str.upper() == otoday]
+    if c_ol: m = m[m[c_ol].astype(str).str.upper() == ol_today]
+    if c_pdc: m = m[m[c_pdc].astype(str).str.upper() == pdc_today]
+
+    # Count bull/bear outcomes if 'Result' (or similar) exists
+    res_col = None
+    for c in ["Result","Direction","Side","Pick"]:
+        if c in m.columns: res_col = c; break
+    b = r = 0
+    if res_col:
+        b = int((m[res_col].astype(str).str.upper() == "BULL").sum())
+        r = int((m[res_col].astype(str).str.upper() == "BEAR").sum())
+    n = int(len(m))
+    gap = (b - r) / max(1, n) * 100.0
+    conf = 100.0 * max(b, r) / max(1, n)
+
+    # Choose display pick
+    pick = "ABSTAIN"
+    level = "core"
+    if n >= 20 and np.isfinite(gap) and gap >= EDGE_PP and conf >= CONF_FLOOR:
+        pick = "BULL" if b > r else "BEAR"
+    if REQUIRE_OT_ALIGN and pick != "ABSTAIN" and otoday in ("BULL","BEAR") and pick != otoday:
+        pick = "ABSTAIN"
+
+    reason = (
+        f"{level} freq: OT={otoday}, OL={ol_today}, PDC={pdc_today} | "
+        f"BULL={b}, BEAR={r}, N={n}, gap={gap:.2f}pp, conf={conf:.1f}% "
+        f"{'| OT-align' if REQUIRE_OT_ALIGN else ''}"
+    )
+
+    # ORB range for helper signals (for UI to show proximity)
+    h,l = _orb(day_df) if not day_df.empty else (np.nan, np.nan)
+    orb_rng = h - l if (np.isfinite(h) and np.isfinite(l)) else np.nan
+    last_close = float(day_df.iloc[-1]["Close"]) if not day_df.empty else np.nan
+    near_high = _is_close(last_close, h, last_close, orb_rng) if np.isfinite(last_close) else False
+    near_low  = _is_close(last_close, l, last_close, orb_rng) if np.isfinite(last_close) else False
 
     return {
-        "symbol": sym, "date": str(day.date()),
-        "tags": {"OpeningTrend": ot, "OpenLocation": ol, "PrevDayContext": pdc},
-        "pick": display, "confidence": int(conf), "reason": reason,
-        "entry": entry, "orb_high": orb_h, "orb_low": orb_l,
-        "prev_high": prev_h, "prev_low": prev_l,
-        "stop": stop, "t1": t1, "t2": t2,
-        "risk_per_share": risk_per_share, "risk_rs": risk_rs, "qty": qty,
-        "edge_pp": gap if np.isfinite(gap) else None, "hist_counts": {"bull": int(b), "bear": int(r), "n": int(n), "level": level},
-        "ready": bool(ready)
+        "symbol": sym,
+        "date": str(last_date),
+        "ot": otoday, "ol": ol_today, "pdc": pdc_today,
+        "display_pick": pick,
+        "confidence": conf,
+        "reason": reason,
+        "hist_counts": {"bull": b, "bear": r, "n": n, "edge_pp": gap},
+        "orb": {"high": h, "low": l, "range": orb_rng, "near_high": near_high, "near_low": near_low},
     }
