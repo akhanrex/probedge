@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
-import pandas as pd
+import pandas as pd, json
 from probedge.storage.resolver import locate_for_read
 from ._jsonsafe import json_safe_df
 
@@ -16,10 +16,18 @@ def get_tm5(symbol: str = Query(..., alias="symbol")):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read CSV: {e}")
 
+    # Sanitize types/values (NaN/NaT/inf, datetimes)
     df = json_safe_df(df)
+
+    # Force JSON-safe payload via pandas → JSON → Python
+    try:
+        records = json.loads(df.to_json(orient="records"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Serialization error: {e}")
+
     return {
         "symbol": symbol.upper(),
         "rows": int(len(df)),
         "columns": [str(c) for c in df.columns],
-        "data": df.to_dict(orient="records"),
+        "data": records,
     }
