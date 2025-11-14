@@ -15,6 +15,7 @@ def get_matches(
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"MASTER not found for {symbol}")
     m = pd.read_csv(path)
+
     def norm(x): return str(x).strip().upper()
     m["OpeningTrend"] = m["OpeningTrend"].astype(str).str.upper().str.strip()
     if ol:
@@ -22,9 +23,14 @@ def get_matches(
     if pdc:
         m = m[m["PrevDayContext"].astype(str).str.upper().str.strip() == norm(pdc)]
     m = m[m["OpeningTrend"] == norm(ot)]
-    # Result filter: only BULL/BEAR for frequency stats
+
+    # Only BULL/BEAR for frequency stats
     lab = m["Result"].astype(str).str.upper().str.strip()
     m = m[lab.isin(["BULL", "BEAR"])]
+
+    # Make JSON-safe
+    m = m.where(pd.notnull(m), None)
+
     dates = list(pd.to_datetime(m["Date"], errors="coerce").dropna().astype(str).unique())
     return {
         "symbol": symbol.upper(),
