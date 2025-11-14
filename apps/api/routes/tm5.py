@@ -10,10 +10,13 @@ def get_tm5(symbol: str = Query(..., alias="symbol")):
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"TM5 not found for {symbol}")
     df = pd.read_csv(path)
-    # Keep payload light; UI usually paginates/filters on client
+
+    # Make JSON-safe: replace NaN/NaT with None
+    df = df.where(pd.notnull(df), None)
+
     return {
         "symbol": symbol.upper(),
-        "rows": len(df),
-        "columns": list(df.columns),
-        "data": df.to_dict(orient="records")
+        "rows": int(len(df)),
+        "columns": [str(c) for c in df.columns],
+        "data": df.to_dict(orient="records"),
     }
