@@ -17,7 +17,6 @@ def get_tm5(symbol: str = Query(..., alias="symbol")):
         raise HTTPException(status_code=500, detail=f"Failed to read CSV: {e}")
 
     df = json_safe_df(df)
-
     return {
         "symbol": symbol.upper(),
         "rows": int(len(df)),
