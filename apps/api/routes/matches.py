@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
-import pandas as pd
+import pandas as pd, json
 from probedge.storage.resolver import locate_for_read
 from ._jsonsafe import json_safe_df
 
@@ -23,20 +23,24 @@ def get_matches(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read MASTER CSV: {e}")
 
-    # Normalize tags and filter
     m["OpeningTrend"] = m["OpeningTrend"].astype(str).str.upper().str.strip()
     if ol:
         m = m[m["OpenLocation"].astype(str).str.upper().str.strip() == _norm(ol)]
     if pdc:
         m = m[m["PrevDayContext"].astype(str).str.upper().str.strip() == _norm(pdc)]
     m = m[m["OpeningTrend"] == _norm(ot)]
-
     lab = m["Result"].astype(str).str.upper().str.strip()
     m = m[lab.isin(["BULL", "BEAR"])]
 
-    # JSON-safe + dates list
+    # Sanitize + force JSON-safe roundtrip
     m = json_safe_df(m)
-    dates = sorted({r.get("Date") for _, r in m.iterrows() if r.get("Date")})
+    try:
+        rows = json.loads(m.to_json(orient="records"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Serialization error: {e}")
+
+    # Dates list (safe strings)
+    dates = sorted({r.get("Date") for r in rows if r.get("Date")})
 
     return {
         "symbol": symbol.upper(),
@@ -44,5 +48,5 @@ def get_matches(
         "ol": _norm(ol) if ol else "",
         "pdc": _norm(pdc) if pdc else "",
         "dates": dates,
-        "rows": m.to_dict(orient="records"),
+        "rows": rows,
     }
