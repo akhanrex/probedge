@@ -1,8 +1,11 @@
 from fastapi import APIRouter, HTTPException, Query
 import pandas as pd
 from probedge.storage.resolver import locate_for_read
+from ._jsonsafe import json_safe_df
 
 router = APIRouter()
+
+def _norm(x): return str(x).strip().upper()
 
 @router.get("/api/matches")
 def get_matches(
@@ -14,29 +17,32 @@ def get_matches(
     path = locate_for_read("masters", symbol)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"MASTER not found for {symbol}")
-    m = pd.read_csv(path)
 
-    def norm(x): return str(x).strip().upper()
+    try:
+        m = pd.read_csv(path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read MASTER CSV: {e}")
+
+    # Normalize tags and filter
     m["OpeningTrend"] = m["OpeningTrend"].astype(str).str.upper().str.strip()
     if ol:
-        m = m[m["OpenLocation"].astype(str).str.upper().str.strip() == norm(ol)]
+        m = m[m["OpenLocation"].astype(str).str.upper().str.strip() == _norm(ol)]
     if pdc:
-        m = m[m["PrevDayContext"].astype(str).str.upper().str.strip() == norm(pdc)]
-    m = m[m["OpeningTrend"] == norm(ot)]
+        m = m[m["PrevDayContext"].astype(str).str.upper().str.strip() == _norm(pdc)]
+    m = m[m["OpeningTrend"] == _norm(ot)]
 
-    # Only BULL/BEAR for frequency stats
     lab = m["Result"].astype(str).str.upper().str.strip()
     m = m[lab.isin(["BULL", "BEAR"])]
 
-    # Make JSON-safe
-    m = m.where(pd.notnull(m), None)
+    # JSON-safe + dates list
+    m = json_safe_df(m)
+    dates = sorted({r.get("Date") for _, r in m.iterrows() if r.get("Date")})
 
-    dates = list(pd.to_datetime(m["Date"], errors="coerce").dropna().astype(str).unique())
     return {
         "symbol": symbol.upper(),
-        "ot": norm(ot),
-        "ol": norm(ol) if ol else "",
-        "pdc": norm(pdc) if pdc else "",
+        "ot": _norm(ot),
+        "ol": _norm(ol) if ol else "",
+        "pdc": _norm(pdc) if pdc else "",
         "dates": dates,
         "rows": m.to_dict(orient="records"),
     }
