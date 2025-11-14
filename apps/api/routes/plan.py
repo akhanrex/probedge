@@ -1,157 +1,151 @@
-from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
-import numpy as np
-import pandas as pd
-from typing import Tuple, Optional
+import pandas as pd, numpy as np, math, json
+from datetime import datetime as dt
+from probedge.storage.resolver import locate_for_read
+from probedge.infra.loaders import read_tm5_csv, by_day_map
+from probedge.infra.constants import SESSION_START, ORB_END, T0, T1, CLOSE_PCT, CLOSE_FR_ORB
+from probedge.infra.constants import LOOKBACK_YEARS
+from probedge.infra.settings import SETTINGS
+from probedge.decision.classifiers_robust import (
+    slice_window, prev_trading_day_ohlc, compute_openingtrend_robust,
+    compute_openlocation_from_df, compute_prevdaycontext_robust
+)
+from probedge.decision.freq_pick import freq_pick
 
-from apps.storage.tm5 import read_tm5, read_master
-from apps.utils.dates import to_minutes, in_range, SESSION_START, ORB_END
+router = APIRouter()
 
-router = APIRouter(prefix="/api", tags=["plan"])
+def _slice_min(df_day, m0, m1):
+    if df_day is None or df_day.empty: return pd.DataFrame()
+    m = (df_day["_mins"] >= m0) & (df_day["_mins"] <= m1)
+    return df_day.loc[m, ["DateTime","Open","High","Low","Close","Date"]]
 
-EDGE_PP = 5.0          # edge threshold in percentage points
-CONF_FLOOR = 55.0      # minimum confidence
-REQUIRE_OT_ALIGN = True
-CLOSE_PCT = 0.0025     # 'close to' threshold as % of entry
-CLOSE_FR_ORB = 0.25    # or 25% of ORB range
+def _is_close(a, b, entry_px, orb_rng) -> bool:
+    thr = np.inf; parts = []
+    if np.isfinite(entry_px) and entry_px > 0: parts.append(entry_px * CLOSE_PCT)
+    if np.isfinite(orb_rng): parts.append(abs(orb_rng) * CLOSE_FR_ORB)
+    if parts: thr = min(parts)
+    return (np.isfinite(a) and np.isfinite(b)) and abs(a - b) <= thr
 
-def _orb(df: pd.DataFrame) -> Tuple[float,float]:
-    mins = to_minutes(df["DateTime"])
-    mask = in_range(mins, SESSION_START, ORB_END)
-    w = df.loc[mask]
-    if w.empty:
-        return np.nan, np.nan
-    return float(w["High"].max()), float(w["Low"].min())
+@router.get("/api/plan")
+def api_plan(symbol: str = Query(...), day: str | None = Query(None, description="YYYY-MM-DD; default=latest day in tm5")):
+    # Load intraday
+    p_tm5 = locate_for_read("intraday", symbol)
+    if not p_tm5.exists():
+        raise HTTPException(404, detail=f"TM5 not found for {symbol}")
+    tm5 = read_tm5_csv(p_tm5)
 
-def _open_location(open_px: float, prev_hi: float, prev_lo: float) -> str:
-    if np.isnan(prev_hi) or np.isnan(prev_lo) or np.isnan(open_px):
-        return "NA"
-    if open_px > prev_hi: return "OOH"  # open outside above range
-    if open_px < prev_lo: return "OOL"  # open outside below range
-    # inside range
-    mid = (prev_hi + prev_lo) / 2.0
-    return "OAR" if abs(open_px - mid) <= (prev_hi - prev_lo) * 0.15 else "OIM"
+    # Resolve target day
+    if day:
+        d0 = pd.to_datetime(day, errors="coerce")
+    else:
+        d0 = tm5["Date"].max()
+    if pd.isna(d0):
+        raise HTTPException(400, detail="Invalid or missing day")
+    day_norm = pd.to_datetime(d0).normalize()
 
-def _opening_trend(df: pd.DataFrame) -> str:
-    # Compare 09:40 close vs 09:15 open; fallback to first/last of first 5 bars
-    mins = to_minutes(df["DateTime"])
-    mask = in_range(mins, SESSION_START, ORB_END)
-    w = df.loc[mask]
-    if len(w) < 2:
-        return "TR"
-    first_open = float(w.iloc[0]["Open"])
-    last_close = float(w.iloc[-1]["Close"])
-    if last_close > first_open: return "BULL"
-    if last_close < first_open: return "BEAR"
-    return "TR"
+    by_day = by_day_map(tm5)
+    df_day = by_day.get(day_norm)
+    if df_day is None or df_day.empty:
+        raise HTTPException(404, detail=f"No intraday bars for {symbol} {day_norm.date()}")
 
-def _prev_day_context(prev_day_df: pd.DataFrame) -> str:
-    if prev_day_df.empty: return "TR"
-    o = float(prev_day_df.iloc[0]["Open"])
-    c = float(prev_day_df.iloc[-1]["Close"])
-    if c > o: return "BULL"
-    if c < o: return "BEAR"
-    return "TR"
+    # Prev-day OHLC + tags
+    prev_ohlc = prev_trading_day_ohlc(tm5, day_norm)
+    ot  = compute_openingtrend_robust(df_day)
+    ol  = compute_openlocation_from_df(df_day, prev_ohlc) if prev_ohlc else ""
+    pdc = compute_prevdaycontext_robust(prev_ohlc["open"], prev_ohlc["high"], prev_ohlc["low"], prev_ohlc["close"]) if prev_ohlc else ""
 
-def _is_close(a: float, b: float, entry_px: float, orb_rng: float) -> bool:
-    thr = np.inf
-    parts = []
-    if np.isfinite(entry_px) and entry_px > 0:
-        parts.append(entry_px * CLOSE_PCT)
-    if np.isfinite(orb_rng):
-        parts.append(abs(orb_rng) * CLOSE_FR_ORB)
-    if parts:
-        thr = min(parts)
-    return np.isfinite(a) and np.isfinite(b) and abs(a - b) <= thr
+    # Load master for freq pick
+    p_master = locate_for_read("masters", symbol)
+    if not p_master.exists():
+        raise HTTPException(404, detail=f"MASTER not found for {symbol}")
+    master = pd.read_csv(p_master)
 
-@router.get("/plan")
-def get_plan(symbol: str = Query(..., min_length=1)):
-    sym = symbol.strip().upper()
-    try:
-        tm5 = read_tm5(sym)
-    except FileNotFoundError as e:
-        raise HTTPException(404, str(e))
-    if tm5.empty:
-        raise HTTPException(409, "tm5 empty")
+    pick, conf_pct, reason, level, stats = freq_pick(day_norm, master)
 
-    last_date = tm5["Date"].max()
-    prev_date = pd.to_datetime(last_date) - pd.Timedelta(days=1)
+    # If abstain → parity behavior: no plan
+    if pick == "ABSTAIN":
+        return {
+            "symbol": symbol.upper(),
+            "date": str(day_norm.date()),
+            "tags": {"OpeningTrend": ot, "OpenLocation": ol, "PrevDayContext": pdc},
+            "pick": "ABSTAIN",
+            "confidence%": conf_pct,
+            "reason": reason,
+            "parity_mode": True,
+        }
 
-    day_df = tm5[tm5["Date"] == last_date]
-    prev_df = tm5[tm5["Date"] == prev_date.date()]
+    long_side = (pick == "BULL")
+    # 09:40 open (entry px)
+    w09 = df_day[(df_day["_mins"] >= 9*60+40) & (df_day["_mins"] <= 15*60+5)]
+    if w09.empty:
+        raise HTTPException(500, detail="Missing 09:40→15:05 window")
+    entry_px = float(w09["Open"].iloc[0])
 
-    # Compute today's quick tags from tm5
-    prev_hi = float(prev_df["High"].max()) if not prev_df.empty else np.nan
-    prev_lo = float(prev_df["Low"].min()) if not prev_df.empty else np.nan
-    open_px = float(day_df.iloc[0]["Open"]) if not day_df.empty else np.nan
+    # ORB for SL calc
+    w_orb = df_day[(df_day["_mins"] >= 9*60+15) & (df_day["_mins"] <= 9*60+35)]
+    if w_orb.empty:
+        raise HTTPException(500, detail="Missing ORB window")
+    orb_h = float(w_orb["High"].max()); orb_l = float(w_orb["Low"].min())
+    rng = max(0.0, orb_h - orb_l)
+    dbl_h, dbl_l = (orb_h + rng, orb_l - rng)
+    prev_h = float(prev_ohlc["high"]) if prev_ohlc else np.nan
+    prev_l = float(prev_ohlc["low"])  if prev_ohlc else np.nan
+    orb_rng = (orb_h - orb_l) if (np.isfinite(orb_h) and np.isfinite(orb_l)) else np.nan
 
-    otoday = _opening_trend(day_df)
-    ol_today = _open_location(open_px, prev_hi, prev_lo)
-    pdc_today = _prev_day_context(prev_df)
+    # Stops per Colab parity
+    if ot == "BULL" and pick == "BULL":
+        stop = prev_l if (np.isfinite(prev_l) and _is_close(orb_l, prev_l, entry_px, orb_rng)) else orb_l
+    elif ot == "BULL" and pick == "BEAR":
+        stop = dbl_h
+    elif ot == "BEAR" and pick == "BEAR":
+        stop = prev_h if (np.isfinite(prev_h) and _is_close(orb_h, prev_h, entry_px, orb_rng)) else orb_h
+    elif ot == "BEAR" and pick == "BULL":
+        stop = dbl_l
+    elif ot == "TR" and pick == "BEAR":
+        stop = dbl_h
+    elif ot == "TR" and pick == "BULL":
+        stop = dbl_l
+    else:
+        stop = dbl_l if long_side else dbl_h
 
-    # Use master for historical matching stats
-    try:
-        master = read_master(sym)
-    except FileNotFoundError as e:
-        raise HTTPException(404, str(e))
+    risk_per_share = (entry_px - stop) if long_side else (stop - entry_px)
+    if (not np.isfinite(risk_per_share)) or risk_per_share <= 0:
+        return {
+            "symbol": symbol.upper(),
+            "date": str(day_norm.date()),
+            "tags": {"OpeningTrend": ot, "OpenLocation": ol, "PrevDayContext": pdc},
+            "pick": pick, "confidence%": conf_pct,
+            "skip": "bad SL/risk",
+            "parity_mode": True,
+        }
 
-    cols = {c.lower(): c for c in master.columns}
-    def col(name: str) -> Optional[str]:
-        for c in [name, name.upper(), name.lower()]:
-            if c in master.columns: return c
-        for k in cols:
-            if k.startswith(name.lower()):
-                return cols[k]
-        return None
+    # Phase B parity: use full daily risk as per-trade risk (matches Colab RISK_RS)
+    per_trade_risk_rs = int(SETTINGS.risk_budget_rs)
+    qty = int(math.floor(per_trade_risk_rs / risk_per_share))
 
-    c_ot = col("OpeningTrend")
-    c_ol = col("OpenLocation")
-    c_pdc = col("PrevDayContext")
-    m = master.copy()
-    if c_ot: m = m[m[c_ot].astype(str).str.upper() == otoday]
-    if c_ol: m = m[m[c_ol].astype(str).str.upper() == ol_today]
-    if c_pdc: m = m[m[c_pdc].astype(str).str.upper() == pdc_today]
+    if qty <= 0:
+        return {
+            "symbol": symbol.upper(),
+            "date": str(day_norm.date()),
+            "tags": {"OpeningTrend": ot, "OpenLocation": ol, "PrevDayContext": pdc},
+            "pick": pick, "confidence%": conf_pct,
+            "skip": "qty=0",
+            "parity_mode": True,
+        }
 
-    # Count bull/bear outcomes if 'Result' (or similar) exists
-    res_col = None
-    for c in ["Result","Direction","Side","Pick"]:
-        if c in m.columns: res_col = c; break
-    b = r = 0
-    if res_col:
-        b = int((m[res_col].astype(str).str.upper() == "BULL").sum())
-        r = int((m[res_col].astype(str).str.upper() == "BEAR").sum())
-    n = int(len(m))
-    gap = (b - r) / max(1, n) * 100.0
-    conf = 100.0 * max(b, r) / max(1, n)
+    t1 = entry_px + risk_per_share if long_side else entry_px - risk_per_share
+    t2 = entry_px + 2*risk_per_share if long_side else entry_px - 2*risk_per_share
 
-    # Choose display pick
-    pick = "ABSTAIN"
-    level = "core"
-    if n >= 20 and np.isfinite(gap) and gap >= EDGE_PP and conf >= CONF_FLOOR:
-        pick = "BULL" if b > r else "BEAR"
-    if REQUIRE_OT_ALIGN and pick != "ABSTAIN" and otoday in ("BULL","BEAR") and pick != otoday:
-        pick = "ABSTAIN"
-
-    reason = (
-        f"{level} freq: OT={otoday}, OL={ol_today}, PDC={pdc_today} | "
-        f"BULL={b}, BEAR={r}, N={n}, gap={gap:.2f}pp, conf={conf:.1f}% "
-        f"{'| OT-align' if REQUIRE_OT_ALIGN else ''}"
-    )
-
-    # ORB range for helper signals (for UI to show proximity)
-    h,l = _orb(day_df) if not day_df.empty else (np.nan, np.nan)
-    orb_rng = h - l if (np.isfinite(h) and np.isfinite(l)) else np.nan
-    last_close = float(day_df.iloc[-1]["Close"]) if not day_df.empty else np.nan
-    near_high = _is_close(last_close, h, last_close, orb_rng) if np.isfinite(last_close) else False
-    near_low  = _is_close(last_close, l, last_close, orb_rng) if np.isfinite(last_close) else False
-
-    return {
-        "symbol": sym,
-        "date": str(last_date),
-        "ot": otoday, "ol": ol_today, "pdc": pdc_today,
-        "display_pick": pick,
-        "confidence": conf,
-        "reason": reason,
-        "hist_counts": {"bull": b, "bear": r, "n": n, "edge_pp": gap},
-        "orb": {"high": h, "low": l, "range": orb_rng, "near_high": near_high, "near_low": near_low},
+    plan = {
+        "symbol": symbol.upper(),
+        "date": str(day_norm.date()),
+        "tags": {"OpeningTrend": ot, "OpenLocation": ol, "PrevDayContext": pdc},
+        "pick": pick, "confidence%": conf_pct, "reason": reason,
+        "entry": round(entry_px, 4), "stop": round(float(stop), 4),
+        "qty": int(qty), "risk_per_share": round(float(risk_per_share), 4),
+        "target1": round(float(t1), 4), "target2": round(float(t2), 4),
+        "per_trade_risk_rs_used": per_trade_risk_rs,
+        "parity_mode": True
     }
+    # JSON-safe
+    return json.loads(pd.DataFrame([plan]).to_json(orient="records"))[0]
