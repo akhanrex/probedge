@@ -1,9 +1,12 @@
+# apps/api/main.py
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from probedge.infra.settings import SETTINGS
 
-# Import routers directly from each module
+# Routers
+from apps.api.routes.health import router as health_router
 from apps.api.routes.config import router as config_router
 from apps.api.routes.tm5 import router as tm5_router
 from apps.api.routes.matches import router as matches_router
@@ -12,18 +15,20 @@ from apps.api.routes.state import router as state_router
 
 
 def create_app() -> FastAPI:
-    app = FastAPI()
+    app = FastAPI(title="ProbEdge API", version="0.1.0")
 
-    # CORS setup
+    # ---- CORS ----
+    origins = SETTINGS.allowed_origins or ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=getattr(SETTINGS, "allowed_origins", ["*"]),
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # REST routes
+    # ---- REST routes ----
+    app.include_router(health_router)
     app.include_router(config_router)
     app.include_router(tm5_router)
     app.include_router(matches_router)
