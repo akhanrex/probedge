@@ -1,141 +1,195 @@
-from fastapi import APIRouter, Query, HTTPException
-from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Query
+from typing import Dict, Any, List, Optional
 import math
 
 from probedge.infra.settings import SETTINGS
 from probedge.decision.plan_core import build_parity_plan
+from probedge.infra.logger import get_logger
 
+log = get_logger(__name__)
 router = APIRouter()
 
 
 def _effective_daily_risk_rs() -> int:
-    if getattr(SETTINGS, "mode", "paper") == "test":
-        return 1000
-    return int(getattr(SETTINGS, "risk_budget_rs", 10000))
+    """
+    Decide which daily risk number to use.
+
+    - MODE = 'test' → use RISK_RS_TEST (usually 1,000).
+    - Otherwise → use risk_budget_rs (derived from RISK_RS_DEFAULT, usually 10,000).
+    """
+    mode = (SETTINGS.mode or "").lower()
+    if mode == "test":
+        return int(getattr(SETTINGS, "risk_rs_test", 1000))
+
+    if hasattr(SETTINGS, "risk_budget_rs") and SETTINGS.risk_budget_rs:
+        return int(SETTINGS.risk_budget_rs)
+
+    # Fallback
+    return int(getattr(SETTINGS, "risk_rs_default", 10000))
 
 
-def _is_active_plan(plan: Dict[str, Any]) -> bool:
-    if not isinstance(plan, dict):
+def _is_active_plan(p: Dict[str, Any]) -> bool:
+    """
+    Decide if a plan is tradable for portfolio purposes.
+    """
+    if not isinstance(p, dict):
         return False
-    if plan.get("pick") not in ("BULL", "BEAR"):
+
+    pick = p.get("pick")
+    if pick not in ("BULL", "BEAR"):
         return False
-    if plan.get("skip"):
+
+    entry = p.get("entry")
+    stop = p.get("stop")
+
+    if entry is None or stop is None:
         return False
-    rps = plan.get("risk_per_share")
+
     try:
-        rps = float(rps)
-    except Exception:
+        e = float(entry)
+        s = float(stop)
+    except (TypeError, ValueError):
         return False
-    return rps > 0.0
+
+    if not (math.isfinite(e) and math.isfinite(s)):
+        return False
+
+    if abs(e - s) <= 0:
+        return False
+
+    return True
+
+
+def _build_raw_plans_for_day(day_str: Optional[str]) -> List[Dict[str, Any]]:
+    """
+    Build single-symbol parity plans for all portfolio symbols for a given day.
+
+    day_str may be:
+    - 'YYYY-MM-DD' → explicit day
+    - None         → builder uses latest available day per symbol
+    """
+    symbols = SETTINGS.symbols
+    raw: List[Dict[str, Any]] = []
+
+    for sym in symbols:
+        try:
+            plan = build_parity_plan(sym, day_str)
+        except HTTPException as exc:
+            # If tm5 / master missing, mark as ABSTAIN and continue
+            log.warning("build_parity_plan failed for %s: %s", sym, exc)
+            raw.append(
+                {
+                    "symbol": sym,
+                    "pick": "ABSTAIN",
+                    "reason": f"PLAN_ERROR: {exc.detail}",
+                }
+            )
+            continue
+
+        raw.append(plan)
+
+    return raw
 
 
 def _apply_portfolio_split(
-    plans: List[Dict[str, Any]],
+    raw_plans: List[Dict[str, Any]],
     daily_risk_rs: int,
 ) -> Dict[str, Any]:
     """
-    Take per-symbol parity plans and apply equal risk split:
-      - Find all active plans (BULL/BEAR, no skip, risk_per_share > 0).
-      - risk_per_trade = floor(daily_risk / active_count)
-      - qty = floor(risk_per_trade / risk_per_share)
-      - If qty == 0 -> mark skip='qty=0_after_split' and do NOT redistribute.
-    Returns dict with updated plans + meta.
+    Take raw single-symbol plans and apply equal risk-splitting across active trades.
+
+    - Only BULL/BEAR with valid entry/stop are considered active.
+    - Risk per active trade = floor(daily_risk_rs / active_count).
+    - Qty = floor(risk_per_trade / |entry - stop|).
     """
-    active_indices = [i for i, p in enumerate(plans) if _is_active_plan(p)]
+    # Decide which date to use for the state payload
+    day: Optional[str] = None
+    for p in raw_plans:
+        val = p.get("date")
+        if val:
+            day = str(val).split("T")[0]
+            break
+
+    active_indices = [i for i, p in enumerate(raw_plans) if _is_active_plan(p)]
     active_count = len(active_indices)
 
-    if active_count <= 0 or daily_risk_rs <= 0:
-        # Nothing to allocate; just return baseline plans with zeroed portfolio info
+    if active_count == 0 or daily_risk_rs <= 0:
+        # No trades: pass-through
         return {
+            "date": day,
+            "mode": SETTINGS.mode,
             "daily_risk_rs": daily_risk_rs,
+            "active_trades": 0,
             "risk_per_trade_rs": 0,
-            "active_count": 0,
-            "plans": plans,
+            "plans": raw_plans,
         }
 
-    risk_per_trade = int(math.floor(daily_risk_rs / active_count))
+    risk_per_trade_rs = int(daily_risk_rs // active_count)
 
-    for idx in active_indices:
-        p = plans[idx]
-        rps = float(p.get("risk_per_share", 0.0))
-        if rps <= 0:
-            p["skip"] = "bad_risk_per_share"
+    adjusted: List[Dict[str, Any]] = []
+    for idx, p in enumerate(raw_plans):
+        q = dict(p)  # shallow copy
+
+        if idx not in active_indices:
+            # Non-active: make sure qty and per-trade risk are zeroed for clarity
+            q["qty"] = int(q.get("qty") or 0)
+            q["per_trade_risk_rs_used"] = 0
+            q["parity_mode"] = False
+            adjusted.append(q)
             continue
 
-        qty = int(math.floor(risk_per_trade / rps))
+        entry = float(p.get("entry"))
+        stop = float(p.get("stop"))
+        risk_per_share = abs(entry - stop)
+
+        if not math.isfinite(risk_per_share) or risk_per_share <= 0:
+            q["qty"] = 0
+            q["per_trade_risk_rs_used"] = 0
+            q["parity_mode"] = False
+            adjusted.append(q)
+            continue
+
+        qty = int(risk_per_trade_rs // risk_per_share)
+
         if qty <= 0:
-            # do not redistribute; simply mark and move on
-            p["skip"] = "qty=0_after_split"
+            q["qty"] = 0
+            q["per_trade_risk_rs_used"] = 0
+            q["parity_mode"] = False
+            adjusted.append(q)
             continue
 
-        p["qty"] = qty
-        p["per_trade_risk_rs_used"] = risk_per_trade
-        p["portfolio_mode"] = True  # flag that portfolio split has been applied
+        q["risk_per_share"] = risk_per_share
+        q["qty"] = qty
+        q["per_trade_risk_rs_used"] = risk_per_trade_rs
+        q["parity_mode"] = True
 
-    return {
-        "daily_risk_rs": daily_risk_rs,
-        "risk_per_trade_rs": risk_per_trade,
-        "active_count": active_count,
-        "plans": plans,
-    }
-
-
-@router.get("/api/plan/all")
-def api_plan_all(
-    day: str = Query(..., description="YYYY-MM-DD (trading day to evaluate)")
-):
-    """
-    Build parity plans for ALL configured symbols for a given day.
-    Does NOT change qty yet; this is raw parity output per-symbol.
-    """
-    symbols = list(getattr(SETTINGS, "symbols", []))
-    if not symbols:
-        raise HTTPException(status_code=500, detail="No symbols configured in SETTINGS")
-
-    plans: List[Dict[str, Any]] = []
-    for sym in symbols:
-        plan = build_parity_plan(sym, day)
-        plans.append(plan)
+        adjusted.append(q)
 
     return {
         "date": day,
-        "symbols": symbols,
-        "plans": plans,
-        "parity_mode": True,
+        "mode": SETTINGS.mode,
+        "daily_risk_rs": daily_risk_rs,
+        "active_trades": active_count,
+        "risk_per_trade_rs": risk_per_trade_rs,
+        "plans": adjusted,
     }
 
 
 @router.get("/api/state")
 def api_state(
-    day: str = Query(..., description="YYYY-MM-DD (trading day to evaluate)")
+    day: Optional[str] = Query(
+        None,
+        description="YYYY-MM-DD; if omitted, uses latest available day from tm5/master",
+    )
 ):
     """
-    Portfolio state for a given day:
-      - daily_risk_rs (effective)
-      - risk_per_trade_rs after equal split
-      - active_count (symbols with live pick)
-      - per-symbol plans (with qty adjusted per split)
+    Portfolio-level execution state.
+
+    - Builds raw single-symbol parity plans (Colab-equivalent).
+    - Applies equal risk splitting across all active (BULL/BEAR) picks.
+    - Uses RISK_RS_DEFAULT or RISK_RS_TEST depending on MODE.
     """
-    symbols = list(getattr(SETTINGS, "symbols", []))
-    if not symbols:
-        raise HTTPException(status_code=500, detail="No symbols configured in SETTINGS")
-
-    # 1) Build per-symbol parity plans
-    raw_plans: List[Dict[str, Any]] = []
-    for sym in symbols:
-        p = build_parity_plan(sym, day)
-        raw_plans.append(p)
-
-    # 2) Apply portfolio split
+    raw_plans = _build_raw_plans_for_day(day)
     daily_risk_rs = _effective_daily_risk_rs()
-    res = _apply_portfolio_split(raw_plans, daily_risk_rs)
-
-    return {
-        "date": day,
-        "mode": getattr(SETTINGS, "mode", "paper"),
-        "symbols": symbols,
-        "risk_budget_rs": daily_risk_rs,
-        "risk_per_trade_rs": res.get("risk_per_trade_rs", 0),
-        "active_count": res.get("active_count", 0),
-        "plans": res.get("plans", []),
-    }
+    state = _apply_portfolio_split(raw_plans, daily_risk_rs)
+    return state
