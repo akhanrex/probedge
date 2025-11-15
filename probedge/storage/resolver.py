@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 from probedge.infra.settings import SETTINGS
 
 # Symbol aliasing hidden from API/UI (TMPV maps to TATAMOTORS internally)
-ALIASES = {"TMPV": "TATAMOTORS"}
+ALIASES = {"TATAMOTORS": "TMPV"}
 
 def _canonical_sym(sym: str) -> str:
     s = (sym or "").upper().strip()
