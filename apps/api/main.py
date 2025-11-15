@@ -1,29 +1,36 @@
-import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from probedge.infra.settings import SETTINGS
-from apps.api.routes import config as config_route
-from apps.api.routes import tm5 as tm5_route
-from apps.api.routes import matches as matches_route
-from apps.api.routes import plan as plan_route
-from apps.api.routes import state as state_route
-# (Other routes like journal/state/plan will be added in later phases)
 
-app = FastAPI(title="ProbEdge API")
+# Import routers directly from each module
+from apps.api.routes.config import router as config_router
+from apps.api.routes.tm5 import router as tm5_router
+from apps.api.routes.matches import router as matches_router
+from apps.api.routes.plan import router as plan_router
+from apps.api.routes.state import router as state_router
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"] if SETTINGS.allowed_origins == ["*"] else SETTINGS.allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-app.include_router(config_route.router)
-app.include_router(tm5_route.router)
-app.include_router(matches_route.router)
-app.include_router(plan_route.router)
-app.include_router(state_route.router)
+def create_app() -> FastAPI:
+    app = FastAPI()
 
-if __name__ == "__main__":
-    uvicorn.run("apps.api.main:app", host="0.0.0.0", port=9002, reload=True)
+    # CORS setup
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=getattr(SETTINGS, "allowed_origins", ["*"]),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # REST routes
+    app.include_router(config_router)
+    app.include_router(tm5_router)
+    app.include_router(matches_router)
+    app.include_router(plan_router)
+    app.include_router(state_router)
+
+    return app
+
+
+app = create_app()
