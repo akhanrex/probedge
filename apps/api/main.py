@@ -6,6 +6,7 @@ from apps.api.routes import config as config_route
 from apps.api.routes import tm5 as tm5_route
 from apps.api.routes import matches as matches_route
 from apps.api.routes import plan as plan_route
+from apps.api.routes import state as state_route
 # (Other routes like journal/state/plan will be added in later phases)
 
 app = FastAPI(title="ProbEdge API")
@@ -22,6 +23,7 @@ app.include_router(config_route.router)
 app.include_router(tm5_route.router)
 app.include_router(matches_route.router)
 app.include_router(plan_route.router)
+app.include_router(state_route.router)
 
 if __name__ == "__main__":
     uvicorn.run("apps.api.main:app", host="0.0.0.0", port=9002, reload=True)
