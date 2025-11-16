@@ -2,15 +2,15 @@
 
 symbols:
   - TATAMOTORS
+  - SBIN
+  - RECLTD
+  - JSWENERGY
+  - LT
+  - COALINDIA
+  - ABB
+  - LICI
   - ETERNAL
   - JIOFIN
-  - HAL
-  - LICI
-  - BAJFINANCE
-  - JSWENERGY
-  - RECLTD
-  - BAJAJHFL
-  - SWIGGY
 
 # Canonical paths. All writes go here. Readers may allow legacy fallbacks.
 paths:
