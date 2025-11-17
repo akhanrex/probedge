@@ -8,6 +8,7 @@ from probedge.infra.settings import SETTINGS
 from probedge.storage.atomic_json import AtomicJSON
 from probedge.decision.picker_batchv1 import read_tm5, decide_for_day
 from probedge.decision.sl import compute_stop
+from probedge.infra.health import record_batch_agent_heartbeat
 
 HEARTBEAT_SEC = 1.0
 RISK_RS = float(os.getenv("RISK_RS", "10000"))
