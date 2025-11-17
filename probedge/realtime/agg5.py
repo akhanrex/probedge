@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Tuple
 from probedge.infra.settings import SETTINGS
 from probedge.realtime.kite_live import live_tick_stream
+from probedge.infra.health import record_agg5_heartbeat
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
