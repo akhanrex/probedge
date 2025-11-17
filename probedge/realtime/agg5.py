@@ -55,6 +55,7 @@ async def main():
     syms = SETTINGS.symbols
     print("[agg5] starting for:", syms)
     await run_agg(syms)
+    record_agg5_heartbeat()
 
 if __name__ == "__main__":
     asyncio.run(main())
