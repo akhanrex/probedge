@@ -130,11 +130,15 @@ def main():
     Path(state_path).parent.mkdir(parents=True, exist_ok=True)
     Path(state_path).touch(exist_ok=True)
 
+    print(f"[batch_agent] using state file: {state_path}")
+    print("[batch_agent] starting loop...")
+
     while True:
         # do one control cycle (arm or idle)
         process_once(state_path)
         # ---- HEARTBEAT: batch_agent loop is alive ----
         record_batch_agent_heartbeat()
+        print(f"[batch_agent] heartbeat at {_dt.now().strftime('%H:%M:%S')}")
         # ----------------------------------------------
         time.sleep(HEARTBEAT_SEC)
 
