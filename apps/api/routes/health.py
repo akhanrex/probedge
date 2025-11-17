@@ -1,6 +1,7 @@
 # apps/api/routes/health.py
 
 from fastapi import APIRouter
+
 from probedge.infra.settings import SETTINGS
 from probedge.infra.health import assess_health
 
