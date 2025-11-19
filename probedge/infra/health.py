@@ -1,8 +1,6 @@
 # probedge/infra/health.py
 #
 # Simple health & heartbeat helper for the Probedge runtime.
-# - Writes a small "health" block into live_state.json
-# - Lets /api/health and the UI decide if the system is OK or not.
 
 from __future__ import annotations
 
@@ -17,12 +15,6 @@ from probedge.infra.settings import SETTINGS
 
 STATE_PATH = SETTINGS.paths.state  # e.g. data/state/live_state.json
 _HEALTH_KEY = "health"
-
-
-@dataclass
-class ComponentHeartbeat:
-    name: str
-    last_ts: float  # unix timestamp (seconds)
 
 
 @dataclass
@@ -50,7 +42,6 @@ def _read_state() -> Dict[str, Any]:
         with open(STATE_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        # On any error, treat as empty; we don't want to crash health checks.
         return {}
 
 
@@ -64,25 +55,18 @@ def _atomic_write_state(state: Dict[str, Any]) -> None:
 
 
 def record_agg5_heartbeat() -> None:
-    """
-    Called by realtime.agg5 whenever it successfully writes/updates bars.
-    Updates last_agg5_ts in the health block.
-    """
+    """Called by realtime.agg5 whenever it successfully writes/updates bars."""
     now = time.time()
     state = _read_state()
     health_dict = state.get(_HEALTH_KEY, {})
     health = HealthState.from_dict(health_dict)
     health.last_agg5_ts = now
-    # Do not change system_status/reason here; that is computed separately.
     state[_HEALTH_KEY] = asdict(health)
     _atomic_write_state(state)
 
 
 def record_batch_agent_heartbeat() -> None:
-    """
-    Called by ops.batch_agent whenever it successfully writes plans.
-    Updates last_batch_ts in the health block.
-    """
+    """Called by ops.batch_agent whenever it successfully runs a loop."""
     now = time.time()
     state = _read_state()
     health_dict = state.get(_HEALTH_KEY, {})
@@ -102,7 +86,6 @@ def assess_health(max_bar_lag_sec: int = 600, max_plan_lag_sec: int = 600) -> He
     health_dict = state.get(_HEALTH_KEY)
 
     if not health_dict:
-        # No health info yet → probably just starting up
         return HealthState(
             system_status="WARN",
             reason="health block not initialized; components may not be running yet",
@@ -111,7 +94,6 @@ def assess_health(max_bar_lag_sec: int = 600, max_plan_lag_sec: int = 600) -> He
         )
 
     health = HealthState.from_dict(health_dict)
-
     problems = []
 
     if health.last_agg5_ts is None:
@@ -132,14 +114,27 @@ def assess_health(max_bar_lag_sec: int = 600, max_plan_lag_sec: int = 600) -> He
         health.system_status = "OK"
         health.reason = "all critical components reporting within thresholds"
     else:
-        # If both stale, call it DOWN; otherwise WARN.
         if len(problems) >= 2:
             health.system_status = "DOWN"
         else:
             health.system_status = "WARN"
         health.reason = "; ".join(problems)
 
-    # Persist the updated health summary back into state
     state[_HEALTH_KEY] = asdict(health)
     _atomic_write_state(state)
     return health
+
+
+def set_system_status(status: str, reason: str) -> None:
+    """
+    Force-set system_status + reason (used by supervisor when a process dies
+    or when user stops the system). Next assess_health() call may refine it
+    based on heartbeats, but this gives an immediate, explicit signal.
+    """
+    state = _read_state()
+    health_dict = state.get(_HEALTH_KEY, {})
+    health = HealthState.from_dict(health_dict)
+    health.system_status = status
+    health.reason = reason
+    state[_HEALTH_KEY] = asdict(health)
+    _atomic_write_state(state)
