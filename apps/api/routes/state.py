@@ -1,14 +1,24 @@
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import math
 
 from probedge.infra.settings import SETTINGS
 from probedge.decision.plan_core import build_parity_plan
 from probedge.infra.logger import get_logger
+from probedge.storage.atomic_json import AtomicJSON
 
 log = get_logger(__name__)
 router = APIRouter()
 
+# live_state.json path + helper
+STATE_PATH = SETTINGS.paths.state or "data/state/live_state.json"
+aj = AtomicJSON(STATE_PATH)
+
+
+# -------------------------------
+# 1) Daily risk & parity helpers
+# -------------------------------
 
 def _effective_daily_risk_rs() -> int:
     """
@@ -175,6 +185,10 @@ def _apply_portfolio_split(
     }
 
 
+# -------------------------------
+# 2) Existing parity endpoint
+# -------------------------------
+
 @router.get("/api/state")
 def api_state(
     day: Optional[str] = Query(
@@ -193,3 +207,51 @@ def api_state(
     daily_risk_rs = _effective_daily_risk_rs()
     state = _apply_portfolio_split(raw_plans, daily_risk_rs)
     return state
+
+
+# -------------------------------
+# 3) Live-state + ARM control
+# -------------------------------
+
+class ArmRequest(BaseModel):
+    symbol: str
+    strategy: str = "batch_v1"
+
+
+@router.get("/api/state_raw")
+def api_state_raw():
+    """
+    Raw live_state.json dump (whatever batch_agent + other components wrote).
+    Used for debugging and UI introspection.
+    """
+    state = aj.read(default={})
+    return state or {}
+
+
+@router.post("/api/control/arm")
+def api_control_arm(req: ArmRequest):
+    """
+    Ask batch_agent to compute a plan for TODAY for a symbol.
+
+    This just writes control fields into live_state.json:
+      - control.action  = 'arm'
+      - control.symbol  = SYMBOL (upper-case)
+      - control.strategy = strategy (lower-case, default 'batch_v1')
+
+    The batch_agent loop will pick this up and write a 'plan' block back
+    into live_state.json.
+    """
+    state = aj.read(default={})
+    ctrl = state.get("control") or {}
+
+    ctrl["action"] = "arm"
+    ctrl["symbol"] = req.symbol.strip().upper()
+    ctrl["strategy"] = req.strategy.strip().lower()
+
+    state["control"] = ctrl
+    aj.write(state)
+
+    return {
+        "status": "ok",
+        "control": ctrl,
+    }
