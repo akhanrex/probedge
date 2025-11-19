@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import math
+from datetime import datetime
 
 from probedge.infra.settings import SETTINGS
 from probedge.decision.plan_core import build_parity_plan
@@ -14,6 +15,26 @@ router = APIRouter()
 # live_state.json path + helper
 STATE_PATH = SETTINGS.paths.state or "data/state/live_state.json"
 aj = AtomicJSON(STATE_PATH)
+
+
+# -------------------------------
+# 0) Small helpers
+# -------------------------------
+
+def _today_str() -> str:
+    """Return today's date as YYYY-MM-DD (system local time; on your Mac this is IST)."""
+    return datetime.now().date().isoformat()
+
+
+def _write_portfolio_plan_to_state(portfolio_state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Persist a portfolio-level plan into live_state.json under key 'portfolio_plan'.
+    Returns the same object back to the caller.
+    """
+    state = aj.read(default={})
+    state["portfolio_plan"] = portfolio_state
+    aj.write(state)
+    return portfolio_state
 
 
 # -------------------------------
@@ -255,3 +276,34 @@ def api_control_arm(req: ArmRequest):
         "status": "ok",
         "control": ctrl,
     }
+
+
+# -------------------------------
+# 4) Portfolio ARM for a day
+# -------------------------------
+
+@router.post("/api/plan/arm_day")
+def api_plan_arm_day(
+    day: Optional[str] = Query(
+        None,
+        description="YYYY-MM-DD; if omitted, uses today's date (system local)",
+    )
+):
+    """
+    Build the full 10-symbol parity plan for a specific trading day and
+    persist it into live_state.json under 'portfolio_plan'.
+
+    - Uses the same logic as GET /api/state.
+    - If 'day' is omitted, uses today's date.
+    """
+    if day is None:
+        day = _today_str()
+
+    raw_plans = _build_raw_plans_for_day(day)
+    daily_risk_rs = _effective_daily_risk_rs()
+    portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
+
+    # Force portfolio date to the requested day (even if some symbols had older/latest data)
+    portfolio_state["date"] = day
+
+    return _write_portfolio_plan_to_state(portfolio_state)
