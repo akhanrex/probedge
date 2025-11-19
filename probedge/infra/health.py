@@ -80,6 +80,7 @@ def assess_health(max_bar_lag_sec: int = 600, max_plan_lag_sec: int = 600) -> He
     """
     Compute overall system_status based on heartbeats.
     - If agg5 or batch_agent have not reported in a long time, mark WARN/DOWN.
+    - If ENABLE_AGG5=false, we *do not* treat missing agg5 heartbeat as a problem.
     """
     now = time.time()
     state = _read_state()
@@ -95,14 +96,22 @@ def assess_health(max_bar_lag_sec: int = 600, max_plan_lag_sec: int = 600) -> He
 
     health = HealthState.from_dict(health_dict)
     problems = []
+    notes = []
 
-    if health.last_agg5_ts is None:
-        problems.append("agg5 has never reported")
+    enable_agg5 = os.getenv("ENABLE_AGG5", "true").lower() == "true"
+
+    # --- agg5 check (only if enabled) ---
+    if enable_agg5:
+        if health.last_agg5_ts is None:
+            problems.append("agg5 has never reported")
+        else:
+            lag = now - health.last_agg5_ts
+            if lag > max_bar_lag_sec:
+                problems.append(f"agg5 heartbeat stale ({int(lag)}s ago)")
     else:
-        lag = now - health.last_agg5_ts
-        if lag > max_bar_lag_sec:
-            problems.append(f"agg5 heartbeat stale ({int(lag)}s ago)")
+        notes.append("agg5 disabled via ENABLE_AGG5=false")
 
+    # --- batch_agent check (always required) ---
     if health.last_batch_ts is None:
         problems.append("batch_agent has never reported")
     else:
@@ -110,15 +119,20 @@ def assess_health(max_bar_lag_sec: int = 600, max_plan_lag_sec: int = 600) -> He
         if lag > max_plan_lag_sec:
             problems.append(f"batch_agent heartbeat stale ({int(lag)}s ago)")
 
+    # --- decide overall status ---
     if not problems:
         health.system_status = "OK"
-        health.reason = "all critical components reporting within thresholds"
+        extra = f" ({'; '.join(notes)})" if notes else ""
+        health.reason = "all critical components reporting within thresholds" + extra
     else:
         if len(problems) >= 2:
             health.system_status = "DOWN"
         else:
             health.system_status = "WARN"
-        health.reason = "; ".join(problems)
+        msg = "; ".join(problems)
+        if notes:
+            msg = msg + " | " + "; ".join(notes)
+        health.reason = msg
 
     state[_HEALTH_KEY] = asdict(health)
     _atomic_write_state(state)
@@ -129,7 +143,7 @@ def set_system_status(status: str, reason: str) -> None:
     """
     Force-set system_status + reason (used by supervisor when a process dies
     or when user stops the system). Next assess_health() call may refine it
-    based on heartbeats, but this gives an immediate, explicit signal.
+    based on heartbeats.
     """
     state = _read_state()
     health_dict = state.get(_HEALTH_KEY, {})
