@@ -1,12 +1,13 @@
 # probedge/ops/supervisor.py
 #
 # Simple process supervisor for Probedge:
-# - starts API, batch_agent, agg5
+# - starts API, batch_agent, optionally agg5
 # - monitors them
-# - if any exits, marks system DOWN and stops all
+# - if any required component exits, marks system DOWN and stops all
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -24,9 +25,11 @@ def _start_process(cmd: list[str], name: str) -> subprocess.Popen:
 def main():
     procs: List[Tuple[str, subprocess.Popen]] = []
 
+    enable_agg5 = os.getenv("ENABLE_AGG5", "true").lower() == "true"
+    print(f"[supervisor] ENABLE_AGG5={enable_agg5}")
+
     try:
-        # Assume you already activated the venv before running supervisor.
-        # API (FastAPI + Uvicorn) - no reload in live mode.
+        # API (FastAPI + Uvicorn)
         api = _start_process(
             ["uvicorn", "apps.api.main:app", "--host", "127.0.0.1", "--port", "9002"],
             "api",
@@ -40,12 +43,15 @@ def main():
         )
         procs.append(("batch_agent", batch))
 
-        # 5-min aggregator from ticks
-        agg = _start_process(
-            [sys.executable, "-m", "probedge.realtime.agg5"],
-            "agg5",
-        )
-        procs.append(("agg5", agg))
+        # 5-min aggregator (only if enabled)
+        if enable_agg5:
+            agg = _start_process(
+                [sys.executable, "-m", "probedge.realtime.agg5"],
+                "agg5",
+            )
+            procs.append(("agg5", agg))
+        else:
+            print("[supervisor] agg5 is DISABLED via ENABLE_AGG5=false (no live ticks).")
 
         set_system_status("WARN", "supervisor started; waiting for heartbeats")
 
