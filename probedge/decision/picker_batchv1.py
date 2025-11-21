@@ -108,38 +108,84 @@ def compute_openlocation_from_df(df_day_intraday: pd.DataFrame, prev_ohlc=None) 
     return compute_openlocation(day_open, prev_ohlc)
 
 # ---- TM5 reader (robust) ----
-def read_tm5(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
-    lc2orig = {c.lower(): c for c in df.columns}
+def read_tm5(tm5_path: str) -> pd.DataFrame:
+    """
+    Robust 5-minute intraday loader.
+
+    Accepts any of these datetime layouts:
+      - 'DateTime'
+      - 'DATETIME'
+      - 'date_time'
+      - separate 'Date' + 'Time'
+
+    Returns a DataFrame with:
+      - DateTime: pandas datetime64[ns]
+      - Date: normalized date (midnight)
+    Drops rows with missing DateTime or OHLC.
+    """
+    from pathlib import Path
+
+    p = Path(tm5_path)
+    if not p.exists():
+        raise FileNotFoundError(f"TM5 not found: {p}")
+
+    df_raw = pd.read_csv(p)
+    # clean column names
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
+
+    # --- find / build DateTime ---
     dt = None
-    for key in ("datetime", "date_time", "timestamp", "date"):
-        if key in lc2orig:
-            dt = pd.to_datetime(df[lc2orig[key]], errors="coerce")
-            break
-    if dt is None and ("date" in lc2orig and "time" in lc2orig):
-        dt = pd.to_datetime(df[lc2orig["date"]].astype(str) + " " + df[lc2orig["time"]].astype(str), errors="coerce")
+
+    if "DateTime" in df_raw.columns:
+        dt = pd.to_datetime(df_raw["DateTime"], errors="coerce")
+    elif "DATETIME" in df_raw.columns:
+        dt = pd.to_datetime(df_raw["DATETIME"], errors="coerce")
+    elif "date_time" in df_raw.columns:
+        dt = pd.to_datetime(df_raw["date_time"], errors="coerce")
+    elif "Date" in df_raw.columns and "Time" in df_raw.columns:
+        dt = pd.to_datetime(
+            df_raw["Date"].astype(str).str.strip()
+            + " "
+            + df_raw["Time"].astype(str).str.strip(),
+            errors="coerce",
+        )
+
     if dt is None:
-        raise ValueError(f"No recognizable datetime columns in file: {path}")
-    if "DateTime" in df.columns:
-        df["DateTime"] = dt
-    else:
-        df.insert(0, "DateTime", dt)
-    for k, aliases in {"Open":["open","o"], "High":["high","h"], "Low":["low","l"], "Close":["close","c"], "Volume":["volume","vol","qty"]}.items():
-        if k not in df.columns:
-            for a in aliases:
-                if a in lc2orig:
-                    df.rename(columns={lc2orig[a]:k}, inplace=True)
-                    break
-    for k in ("Open","High","Low","Close","Volume"):
-        if k in df.columns:
-            df[k] = pd.to_numeric(df[k], errors="coerce")
-    df = (df
-          .dropna(subset=["DateTime","Open","High","Low","Close"])
+        raise ValueError(f"Cannot locate datetime columns in TM5: {p}")
+
+    df = df_raw.copy()
+    df["DateTime"] = dt
+
+    # --- normalize OHLC column names ---
+    rename_map = {}
+    for col in df.columns:
+        low = col.lower()
+        if low == "open":
+            rename_map[col] = "Open"
+        elif low == "high":
+            rename_map[col] = "High"
+        elif low == "low":
+            rename_map[col] = "Low"
+        elif low == "close":
+            rename_map[col] = "Close"
+    if rename_map:
+        df.rename(columns=rename_map, inplace=True)
+
+    needed = ["DateTime", "Open", "High", "Low", "Close"]
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in TM5 {p}: {missing}")
+
+    # drop junk and sort
+    df = (
+        df.dropna(subset=needed)
           .sort_values("DateTime")
-          .reset_index(drop=True))
-    df["Date"]  = df["DateTime"].dt.normalize()
-    df["_mins"] = df["DateTime"].dt.hour*60 + df["DateTime"].dt.minute
+          .reset_index(drop=True)
+    )
+
+    # normalized date column we use for day filtering
+    df["Date"] = df["DateTime"].dt.normalize()
+
     return df
 
 def _freq_pick(day, master: pd.DataFrame, lookback_years: int = LOOKBACK_YEARS,
