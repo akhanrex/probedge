@@ -162,6 +162,7 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "parity_mode": True,
         }
 
+
     if tm5.empty:
         return {
             "symbol": sym_upper,
@@ -186,10 +187,15 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
                 "error": "Invalid or missing day",
                 "parity_mode": True,
             }
-        day_date = d0.date()  # python date
+        day_date = d0.date()  # python date, e.g. 2025-08-06
     else:
         # tm5["Date"] is python date from _load_tm5_flex
         day_date = tm5["Date"].max()
+
+    # keep both forms:
+    # - day_date: python date for filtering df
+    # - day_norm: Timestamp for prev_trading_day_ohlc / freq_pick
+    day_norm = pd.to_datetime(day_date).normalize()
 
     df_day = tm5[tm5["Date"] == day_date].copy()
     if df_day.empty:
@@ -202,6 +208,7 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "error": f"No intraday bars for {sym_upper} {day_date}",
             "parity_mode": True,
         }
+
 
 
     # ---------- Prev-day OHLC + tags ----------
