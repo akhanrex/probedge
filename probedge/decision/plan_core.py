@@ -40,90 +40,65 @@ def _effective_daily_risk_rs() -> int:
         return 1000
     return int(getattr(SETTINGS, "risk_budget_rs", 10000))
 
-
-def _load_tm5_flex(p_tm5) -> pd.DataFrame:
+def _load_tm5_flex(path) -> pd.DataFrame:
     """
-    Robust 5-minute intraday loader used by plan_core.
+    Robust TM5 loader for intraday 5-min CSVs.
 
-    - Accepts various datetime layouts:
-        * any single column whose name contains 'datetime' (case-insensitive),
-          e.g. 'DateTime', 'DATETIME', 'date_time', 'DATE_TIME', etc.
-        * OR separate date/time columns (any columns whose name contains 'date' and 'time').
-    - Ensures columns:
-        * DateTime
-        * Date (python date, not Timestamp)
-        * _mins (minutes from midnight)
-        * Open, High, Low, Close
+    Handles:
+    - A single datetime column: DateTime / Datetime / date_time / timestamp / etc.
+    - Or separate 'Date' + 'Time' columns (old format).
+    Builds:
+    - DateTime  (tz-naive, full timestamp)
+    - Date      (normalized Timestamp, 00:00:00)
+    - _mins     (minutes from midnight, for ORB / 09:40 window)
     """
-    df_raw = pd.read_csv(p_tm5)
-    df_raw.columns = [str(c).strip() for c in df_raw.columns]
+    df = pd.read_csv(path)
 
-    # ---- detect datetime ----
-    dt = None
+    # --- try to find a single datetime column directly ---
     dt_col = None
-
-    # 1) any column that looks like datetime
-    for c in df_raw.columns:
-        cl = c.strip().lower()
-        if "datetime" in cl or cl == "dt":
-            dt_col = c
+    preferred = [
+        "DateTime", "Datetime", "DATETIME",
+        "date_time", "DATE_TIME",
+        "timestamp", "Timestamp", "TS", "ts",
+    ]
+    for cand in preferred:
+        if cand in df.columns:
+            dt_col = cand
             break
 
+    # fallback: any column whose name contains both 'date' and 'time'
+    if dt_col is None:
+        for c in df.columns:
+            cl = c.lower()
+            if "date" in cl and "time" in cl:
+                dt_col = c
+                break
+
+    # --- case 1: found a single datetime column ---
     if dt_col is not None:
-        dt = pd.to_datetime(df_raw[dt_col], errors="coerce")
+        dt = pd.to_datetime(df[dt_col], errors="coerce")
+        if dt.isna().all():
+            raise ValueError(f"Cannot parse datetime values in TM5: {path}")
+        df["DateTime"] = dt
+
+    # --- case 2: combine separate Date + Time columns ---
+    elif "Date" in df.columns and "Time" in df.columns:
+        dt = pd.to_datetime(
+            df["Date"].astype(str) + " " + df["Time"].astype(str),
+            errors="coerce",
+        )
+        if dt.isna().all():
+            raise ValueError(f"Cannot parse datetime from Date+Time in TM5: {path}")
+        df["DateTime"] = dt
+
     else:
-        # 2) separate date + time columns (any names containing 'date' / 'time')
-        date_col = None
-        time_col = None
-        for c in df_raw.columns:
-            cl = c.strip().lower()
-            if date_col is None and "date" in cl:
-                date_col = c
-            if time_col is None and "time" in cl:
-                time_col = c
+        # nothing usable
+        raise ValueError(f"Cannot locate datetime columns in TM5: {path}")
 
-        if date_col is not None and time_col is not None:
-            dt = pd.to_datetime(
-                df_raw[date_col].astype(str).str.strip()
-                + " "
-                + df_raw[time_col].astype(str).str.strip(),
-                errors="coerce",
-            )
-
-    if dt is None:
-        raise ValueError(f"Cannot locate datetime columns in TM5: {p_tm5}")
-
-    df = df_raw.copy()
-    df["DateTime"] = dt
-
-    # Standardize OHLC names (open/high/low/close in any case)
-    rename_map = {}
-    for col in df.columns:
-        low = col.lower()
-        if low == "open":
-            rename_map[col] = "Open"
-        elif low == "high":
-            rename_map[col] = "High"
-        elif low == "low":
-            rename_map[col] = "Low"
-        elif low == "close":
-            rename_map[col] = "Close"
-    if rename_map:
-        df.rename(columns=rename_map, inplace=True)
-
-    needed = ["DateTime", "Open", "High", "Low", "Close"]
-    missing = [c for c in needed if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns in TM5 {p_tm5}: {missing}")
-
-    # drop rows without datetime or OHLC
-    df = df.dropna(subset=needed).copy()
-
-    # IMPORTANT: use python date (same style as our debug script that showed 100+ bars)
-    df["Date"] = df["DateTime"].dt.date
+    # Normalize to trading day and minutes-from-midnight
+    df["Date"] = df["DateTime"].dt.normalize()          # Timestamp, e.g. 2025-08-06 00:00:00
     df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
 
-    df = df.sort_values("DateTime").reset_index(drop=True)
     return df
 
 
@@ -136,7 +111,7 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
     """
     sym_upper = symbol.upper()
 
-    # ---------- Load intraday (robust) ----------
+    # ---------- Load intraday ----------
     p_tm5 = locate_for_read("intraday", sym_upper)
     if not p_tm5.exists():
         return {
@@ -187,17 +162,15 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
                 "error": "Invalid or missing day",
                 "parity_mode": True,
             }
-        day_date = d0.date()  # python date, e.g. 2025-08-06
+        day_date = d0.date()  # python date
     else:
-        # tm5["Date"] is python date from _load_tm5_flex
-        day_date = tm5["Date"].max()
+        # from _load_tm5_flex: tm5["Date"] is normalized Timestamp
+        day_date = tm5["Date"].max().date()
 
-    # keep both forms:
-    # - day_date: python date for filtering df
-    # - day_norm: Timestamp for prev_trading_day_ohlc / freq_pick
+    # both forms:
     day_norm = pd.to_datetime(day_date).normalize()
 
-    df_day = tm5[tm5["Date"] == day_date].copy()
+    df_day = tm5[tm5["Date"] == day_norm].copy()
     if df_day.empty:
         return {
             "symbol": sym_upper,
@@ -208,7 +181,6 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "error": f"No intraday bars for {sym_upper} {day_date}",
             "parity_mode": True,
         }
-
 
 
     # ---------- Prev-day OHLC + tags ----------
