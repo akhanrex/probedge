@@ -5,10 +5,8 @@ import numpy as np
 import pandas as pd
 
 from probedge.storage.resolver import locate_for_read
-from probedge.infra.loaders import read_tm5_csv, by_day_map
 from probedge.infra.constants import CLOSE_PCT, CLOSE_FR_ORB
 from probedge.infra.settings import SETTINGS
-from probedge.decision.picker_batchv1 import read_tm5, decide_for_day
 
 from probedge.decision.classifiers_robust import (
     prev_trading_day_ohlc,
@@ -43,6 +41,73 @@ def _effective_daily_risk_rs() -> int:
     return int(getattr(SETTINGS, "risk_budget_rs", 10000))
 
 
+def _load_tm5_flex(p_tm5) -> pd.DataFrame:
+    """
+    Robust 5-minute intraday loader used by plan_core.
+
+    - Accepts various datetime layouts:
+        * 'DateTime'
+        * 'DATETIME'
+        * 'date_time'
+        * or separate 'Date' + 'Time'.
+    - Ensures columns:
+        * DateTime (tz-naive)
+        * Date (normalized to midnight)
+        * _mins (minutes from midnight)
+        * Open, High, Low, Close
+    """
+    df_raw = pd.read_csv(p_tm5)
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
+
+    dt = None
+    if "DateTime" in df_raw.columns:
+        dt = pd.to_datetime(df_raw["DateTime"], errors="coerce")
+    elif "DATETIME" in df_raw.columns:
+        dt = pd.to_datetime(df_raw["DATETIME"], errors="coerce")
+    elif "date_time" in df_raw.columns:
+        dt = pd.to_datetime(df_raw["date_time"], errors="coerce")
+    elif "Date" in df_raw.columns and "Time" in df_raw.columns:
+        dt = pd.to_datetime(
+            df_raw["Date"].astype(str).str.strip()
+            + " "
+            + df_raw["Time"].astype(str).str.strip(),
+            errors="coerce",
+        )
+
+    if dt is None:
+        raise ValueError(f"Cannot locate datetime columns in TM5: {p_tm5}")
+
+    df = df_raw.copy()
+    df["DateTime"] = dt
+
+    # Standardize OHLC names
+    rename_map = {}
+    for col in df.columns:
+        low = col.lower()
+        if low == "open":
+            rename_map[col] = "Open"
+        elif low == "high":
+            rename_map[col] = "High"
+        elif low == "low":
+            rename_map[col] = "Low"
+        elif low == "close":
+            rename_map[col] = "Close"
+    if rename_map:
+        df.rename(columns=rename_map, inplace=True)
+
+    needed = ["DateTime", "Open", "High", "Low", "Close"]
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in TM5 {p_tm5}: {missing}")
+
+    df = df.dropna(subset=needed).copy()
+    df["Date"] = df["DateTime"].dt.normalize()
+    df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
+
+    df = df.sort_values("DateTime").reset_index(drop=True)
+    return df
+
+
 def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, Any]:
     """
     Core Colab-parity plan for a single symbol/day.
@@ -52,7 +117,7 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
     """
     sym_upper = symbol.upper()
 
-    # ---------- Load intraday ----------
+    # ---------- Load intraday (robust) ----------
     p_tm5 = locate_for_read("intraday", sym_upper)
     if not p_tm5.exists():
         return {
@@ -66,7 +131,7 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
         }
 
     try:
-        tm5 = read_tm5_csv(p_tm5)
+        tm5 = _load_tm5_flex(p_tm5)
     except Exception as e:
         return {
             "symbol": sym_upper,
@@ -107,9 +172,9 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
         }
 
     day_norm = pd.to_datetime(d0).normalize()
-    by_day = by_day_map(tm5)
-    df_day = by_day.get(day_norm)
-    if df_day is None or df_day.empty:
+
+    df_day = tm5[tm5["Date"] == day_norm].copy()
+    if df_day.empty:
         return {
             "symbol": sym_upper,
             "date": str(day_norm.date()),
