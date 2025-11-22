@@ -46,33 +46,49 @@ def _load_tm5_flex(p_tm5) -> pd.DataFrame:
     Robust 5-minute intraday loader used by plan_core.
 
     - Accepts various datetime layouts:
-        * 'DateTime'
-        * 'DATETIME'
-        * 'date_time'
-        * or separate 'Date' + 'Time'.
+        * any single column whose name contains 'datetime' (case-insensitive),
+          e.g. 'DateTime', 'DATETIME', 'date_time', 'DATE_TIME', etc.
+        * OR separate date/time columns (any columns whose name contains 'date' and 'time').
     - Ensures columns:
-        * DateTime (tz-naive)
-        * Date (normalized to midnight)
+        * DateTime
+        * Date (python date, not Timestamp)
         * _mins (minutes from midnight)
         * Open, High, Low, Close
     """
     df_raw = pd.read_csv(p_tm5)
     df_raw.columns = [str(c).strip() for c in df_raw.columns]
 
+    # ---- detect datetime ----
     dt = None
-    if "DateTime" in df_raw.columns:
-        dt = pd.to_datetime(df_raw["DateTime"], errors="coerce")
-    elif "DATETIME" in df_raw.columns:
-        dt = pd.to_datetime(df_raw["DATETIME"], errors="coerce")
-    elif "date_time" in df_raw.columns:
-        dt = pd.to_datetime(df_raw["date_time"], errors="coerce")
-    elif "Date" in df_raw.columns and "Time" in df_raw.columns:
-        dt = pd.to_datetime(
-            df_raw["Date"].astype(str).str.strip()
-            + " "
-            + df_raw["Time"].astype(str).str.strip(),
-            errors="coerce",
-        )
+    dt_col = None
+
+    # 1) any column that looks like datetime
+    for c in df_raw.columns:
+        cl = c.strip().lower()
+        if "datetime" in cl or cl == "dt":
+            dt_col = c
+            break
+
+    if dt_col is not None:
+        dt = pd.to_datetime(df_raw[dt_col], errors="coerce")
+    else:
+        # 2) separate date + time columns (any names containing 'date' / 'time')
+        date_col = None
+        time_col = None
+        for c in df_raw.columns:
+            cl = c.strip().lower()
+            if date_col is None and "date" in cl:
+                date_col = c
+            if time_col is None and "time" in cl:
+                time_col = c
+
+        if date_col is not None and time_col is not None:
+            dt = pd.to_datetime(
+                df_raw[date_col].astype(str).str.strip()
+                + " "
+                + df_raw[time_col].astype(str).str.strip(),
+                errors="coerce",
+            )
 
     if dt is None:
         raise ValueError(f"Cannot locate datetime columns in TM5: {p_tm5}")
@@ -80,7 +96,7 @@ def _load_tm5_flex(p_tm5) -> pd.DataFrame:
     df = df_raw.copy()
     df["DateTime"] = dt
 
-    # Standardize OHLC names
+    # Standardize OHLC names (open/high/low/close in any case)
     rename_map = {}
     for col in df.columns:
         low = col.lower()
@@ -100,8 +116,11 @@ def _load_tm5_flex(p_tm5) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing required columns in TM5 {p_tm5}: {missing}")
 
+    # drop rows without datetime or OHLC
     df = df.dropna(subset=needed).copy()
-    df["Date"] = df["DateTime"].dt.normalize()
+
+    # IMPORTANT: use python date (same style as our debug script that showed 100+ bars)
+    df["Date"] = df["DateTime"].dt.date
     df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
 
     df = df.sort_values("DateTime").reset_index(drop=True)
