@@ -44,59 +44,61 @@ def _load_tm5_flex(path) -> pd.DataFrame:
     """
     Robust TM5 loader for intraday 5-min CSVs.
 
-    Handles:
-    - A single datetime column: DateTime / Datetime / date_time / timestamp / etc.
-    - Or separate 'Date' + 'Time' columns (old format).
-    Builds:
-    - DateTime  (tz-naive, full timestamp)
-    - Date      (normalized Timestamp, 00:00:00)
-    - _mins     (minutes from midnight, for ORB / 09:40 window)
+    - Accepts many datetime column naming styles (datetime / DateTime / date_time / timestamp / ts).
+    - Or a separate Date + Time (any case) pair.
+    - Returns DataFrame with:
+        * DateTime (tz-naive)
+        * Date      (normalized Timestamp)
+        * __date    (python date)
+        * _mins     (int minutes from midnight)
     """
     df = pd.read_csv(path)
 
-    # --- try to find a single datetime column directly ---
+    # ---- 1) Try single datetime-like column (case-insensitive) ----
     dt_col = None
-    preferred = [
-        "DateTime", "Datetime", "DATETIME",
-        "date_time", "DATE_TIME",
-        "timestamp", "Timestamp", "TS", "ts",
-    ]
-    for cand in preferred:
-        if cand in df.columns:
-            dt_col = cand
+    preferred_lower = {"datetime", "date_time", "timestamp", "ts"}
+    for c in df.columns:
+        if c.lower() in preferred_lower:
+            dt_col = c
             break
 
-    # fallback: any column whose name contains both 'date' and 'time'
-    if dt_col is None:
-        for c in df.columns:
-            cl = c.lower()
-            if "date" in cl and "time" in cl:
-                dt_col = c
-                break
+    dt = None
 
-    # --- case 1: found a single datetime column ---
     if dt_col is not None:
+        # Found a datetime-like column by name
         dt = pd.to_datetime(df[dt_col], errors="coerce")
         if dt.isna().all():
             raise ValueError(f"Cannot parse datetime values in TM5: {path}")
-        df["DateTime"] = dt
-
-    # --- case 2: combine separate Date + Time columns ---
-    elif "Date" in df.columns and "Time" in df.columns:
-        dt = pd.to_datetime(
-            df["Date"].astype(str) + " " + df["Time"].astype(str),
-            errors="coerce",
-        )
-        if dt.isna().all():
-            raise ValueError(f"Cannot parse datetime from Date+Time in TM5: {path}")
-        df["DateTime"] = dt
-
     else:
-        # nothing usable
-        raise ValueError(f"Cannot locate datetime columns in TM5: {path}")
+        # ---- 2) Try generic "date" + "time" pair (case-insensitive) ----
+        cols_lower = {c.lower(): c for c in df.columns}
+        if "date" in cols_lower and "time" in cols_lower:
+            c_date = cols_lower["date"]
+            c_time = cols_lower["time"]
+            dt = pd.to_datetime(
+                df[c_date].astype(str) + " " + df[c_time].astype(str),
+                errors="coerce",
+            )
+            if dt.isna().all():
+                raise ValueError(f"Cannot parse datetime from Date+Time in TM5: {path}")
+        else:
+            # ---- 3) Last resort: scan for any parseable datetime column ----
+            for c in df.columns:
+                try:
+                    test = pd.to_datetime(df[c], errors="coerce")
+                except Exception:
+                    continue
+                if not test.isna().all():
+                    dt = test
+                    break
 
-    # Normalize to trading day and minutes-from-midnight
-    df["Date"] = df["DateTime"].dt.normalize()          # Timestamp, e.g. 2025-08-06 00:00:00
+            if dt is None or dt.isna().all():
+                raise ValueError(f"Cannot locate datetime columns in TM5: {path}")
+
+    # At this point, dt is a valid datetime Series
+    df["DateTime"] = dt
+    df["Date"] = df["DateTime"].dt.normalize()    # Timestamp (YYYY-MM-DD 00:00:00)
+    df["__date"] = df["DateTime"].dt.date         # python date (YYYY-MM-DD)
     df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
 
     return df
@@ -150,6 +152,10 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
         }
 
     # ---------- Resolve day ----------
+    # Use __date (python date) so we don't fight with timezone/normalize issues.
+    if "__date" not in tm5.columns:
+        tm5["__date"] = tm5["DateTime"].dt.date
+
     if day_str:
         d0 = pd.to_datetime(day_str, errors="coerce")
         if pd.isna(d0):
@@ -162,15 +168,14 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
                 "error": "Invalid or missing day",
                 "parity_mode": True,
             }
-        day_date = d0.date()  # python date
+        day_date = d0.date()
     else:
-        # from _load_tm5_flex: tm5["Date"] is normalized Timestamp
-        day_date = tm5["Date"].max().date()
+        # latest day present in this TM5
+        day_date = tm5["__date"].max()
 
-    # both forms:
     day_norm = pd.to_datetime(day_date).normalize()
 
-    df_day = tm5[tm5["Date"] == day_norm].copy()
+    df_day = tm5[tm5["__date"] == day_date].copy()
     if df_day.empty:
         return {
             "symbol": sym_upper,
@@ -181,7 +186,6 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "error": f"No intraday bars for {sym_upper} {day_date}",
             "parity_mode": True,
         }
-
 
     # ---------- Prev-day OHLC + tags ----------
     prev_ohlc = prev_trading_day_ohlc(tm5, day_norm)
