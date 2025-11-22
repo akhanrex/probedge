@@ -188,6 +188,7 @@ def read_tm5(tm5_path: str) -> pd.DataFrame:
 
     return df
 
+
 def _freq_pick(day, master: pd.DataFrame, lookback_years: int = LOOKBACK_YEARS,
                edge_pp: float = EDGE_PP, conf_floor: int = CONF_FLOOR, require_ot_align: bool = REQUIRE_OT_ALIGN):
     mrow = master.loc[master["Date"] == day]
