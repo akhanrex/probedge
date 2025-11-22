@@ -176,33 +176,33 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
     # ---------- Resolve day ----------
     if day_str:
         d0 = pd.to_datetime(day_str, errors="coerce")
+        if pd.isna(d0):
+            return {
+                "symbol": sym_upper,
+                "date": None,
+                "pick": "ABSTAIN",
+                "confidence%": 0,
+                "skip": "bad_day",
+                "error": "Invalid or missing day",
+                "parity_mode": True,
+            }
+        day_date = d0.date()  # python date
     else:
-        d0 = tm5["Date"].max()
+        # tm5["Date"] is python date from _load_tm5_flex
+        day_date = tm5["Date"].max()
 
-    if pd.isna(d0):
-        return {
-            "symbol": sym_upper,
-            "date": None,
-            "pick": "ABSTAIN",
-            "confidence%": 0,
-            "skip": "bad_day",
-            "error": "Invalid or missing day",
-            "parity_mode": True,
-        }
-
-    day_norm = pd.to_datetime(d0).normalize()
-
-    df_day = tm5[tm5["Date"] == day_norm].copy()
+    df_day = tm5[tm5["Date"] == day_date].copy()
     if df_day.empty:
         return {
             "symbol": sym_upper,
-            "date": str(day_norm.date()),
+            "date": str(day_date),
             "pick": "ABSTAIN",
             "confidence%": 0,
             "skip": "no_intraday_for_day",
-            "error": f"No intraday bars for {sym_upper} {day_norm.date()}",
+            "error": f"No intraday bars for {sym_upper} {day_date}",
             "parity_mode": True,
         }
+
 
     # ---------- Prev-day OHLC + tags ----------
     prev_ohlc = prev_trading_day_ohlc(tm5, day_norm)
