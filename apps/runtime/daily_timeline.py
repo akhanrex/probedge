@@ -37,41 +37,49 @@ def wait_until(target: dtime) -> None:
 
 
 def arm_portfolio_for_day(
-    day: Optional[str] = None,
-    risk_rs: Optional[int] = None,
+    day: str,
+    risk_rs: int,
     wait_for_time: bool = False,
-) -> dict:
+):
     """
-    Build and persist a full 10-symbol portfolio plan for a given day.
+    Build the full 10-symbol parity plan for a specific trading day and
+    persist it into live_state.json + journal.
 
-    - day: 'YYYY-MM-DD' or None (=today)
-    - risk_rs: override daily risk (None = default from SETTINGS)
-    - wait_for_time: if True, block until 09:40 before computing plan
+    - Uses the same logic as GET /api/state.
+    - 'day' is YYYY-MM-DD in backtest / paper mode.
     """
-    if wait_for_time:
-        log.info("Waiting until %s before building portfolio plan...", T_PLAN)
-        wait_until(T_PLAN)
+    log.info(
+        "Arming full portfolio for day=%s, daily_risk=%s, wait=%s",
+        day,
+        risk_rs,
+        wait_for_time,
+    )
 
-    if day is None:
-        d: Optional[date] = None
-    else:
-        d = date.fromisoformat(day)
+    # For now we honour the CLI risk directly
+    daily_risk_rs = int(risk_rs)
 
-    plan = build_portfolio_state_for_day(day=d, explicit_risk_rs=risk_rs)
+    # 1) Build raw plans (tags + pick + entry/stop/targets) for each symbol
+    raw_plans = _build_raw_plans_for_day(day)
 
-    state = aj.read(default={})
-    state["portfolio_plan"] = plan
-    aj.write(state)
+    # 2) Apply portfolio parity split (equal risk per active trade)
+    portfolio_plan = _apply_portfolio_split(raw_plans, daily_risk_rs)
 
+    # Force portfolio date to match the requested day
+    portfolio_plan["date"] = day
+
+    # 3) Persist into live_state.json (under 'portfolio_plan')
+    _write_portfolio_plan_to_state(portfolio_plan)
+
+    # 4) Log a concise summary
     log.info(
         "Portfolio plan built for day %s: daily_risk=%s, active_trades=%s, total_planned=%s",
         day,
         portfolio_plan["daily_risk_rs"],
         portfolio_plan["active_trades"],
-        portfolio_plan["total_planned_risk_rs"],
+        portfolio_plan.get("total_planned_risk_rs"),
     )
 
-    # --- journal the portfolio plan ---
+    # 5) Append to journal.csv (one row per active planned trade)
     try:
         written = append_portfolio_plan(portfolio_plan)
         log.info(
