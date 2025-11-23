@@ -3,6 +3,12 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import math
 from datetime import datetime
+from datetime import date
+from math import floor
+
+from fastapi import APIRouter, Query
+
+from infra.config import get_settings
 
 from probedge.infra.settings import SETTINGS
 from probedge.decision.plan_core import build_parity_plan
@@ -210,24 +216,86 @@ def _apply_portfolio_split(
 # 2) Existing parity endpoint
 # -------------------------------
 
+
 @router.get("/api/state")
 def api_state(
-    day: Optional[str] = Query(
-        None,
-        description="YYYY-MM-DD; if omitted, uses latest available day from tm5/master",
-    )
-):
+    day: Optional[date] = Query(None),
+    risk: Optional[int] = Query(None, description="Override daily risk budget in rupees"),
+) -> Dict[str, Any]:
     """
-    Portfolio-level execution state.
+    State for parity plan for a given day.
 
-    - Builds raw single-symbol parity plans (Colab-equivalent).
-    - Applies equal risk splitting across all active (BULL/BEAR) picks.
-    - Uses RISK_RS_DEFAULT or RISK_RS_TEST depending on MODE.
+    If `risk` is provided, we override the daily risk budget and
+    recompute qty + per_trade_risk purely from entry/stop.
     """
+    settings = get_settings()
+    day = day or date.today()
+
+    # Build raw plans (tags, pick, entry/stop/targets etc) for each symbol
     raw_plans = _build_raw_plans_for_day(day)
-    daily_risk_rs = _effective_daily_risk_rs()
-    state = _apply_portfolio_split(raw_plans, daily_risk_rs)
-    return state
+
+    # 1) Choose daily risk: override if query param is given
+    daily_risk = int(risk) if risk is not None else int(settings.risk_budget_rs)
+
+    # 2) Identify active picks that can actually take risk
+    active_plans = [
+        p
+        for p in raw_plans
+        if p.get("pick") in ("BULL", "BEAR")
+        and p.get("entry") is not None
+        and p.get("stop") is not None
+    ]
+    active_trades = len(active_plans)
+
+    # 3) Equal-split risk across active trades
+    if active_trades > 0 and daily_risk > 0:
+        risk_per_trade = daily_risk // active_trades
+    else:
+        risk_per_trade = 0
+
+    # 4) Recompute qty + per_trade_risk from entry/stop and risk_per_trade
+    total_planned = 0.0
+    for p in raw_plans:
+        is_active = (
+            p.get("pick") in ("BULL", "BEAR")
+            and p.get("entry") is not None
+            and p.get("stop") is not None
+            and risk_per_trade > 0
+        )
+
+        if is_active:
+            entry = float(p["entry"])
+            stop = float(p["stop"])
+            risk_per_share = abs(entry - stop)
+
+            if risk_per_share <= 0:
+                qty = 0
+            else:
+                qty = int(floor(risk_per_trade / risk_per_share))
+
+            per_trade_risk = qty * risk_per_share
+
+            p["risk_per_share"] = risk_per_share
+            p["qty"] = qty
+            p["per_trade_risk_rs_used"] = per_trade_risk
+            p["parity_mode"] = True
+
+            total_planned += per_trade_risk
+        else:
+            # No risk allocation for this symbol
+            p["qty"] = 0
+            p["per_trade_risk_rs_used"] = 0
+            p["parity_mode"] = False
+
+    return {
+        "date": day.isoformat(),
+        "mode": settings.mode,
+        "daily_risk_rs": daily_risk,
+        "active_trades": active_trades,
+        "risk_per_trade_rs": risk_per_trade,
+        "total_planned_risk_rs": total_planned,
+        "plans": raw_plans,
+    }
 
 
 # -------------------------------
