@@ -13,6 +13,8 @@ from probedge.infra.settings import SETTINGS
 from ..infra.logger import get_logger
 from ..infra.loaders import read_tm5_csv
 
+logger = get_logger(__name__)
+
 from probedge.decision.classifiers_robust import (
     prev_trading_day_ohlc,
     compute_openingtrend_robust,
@@ -60,7 +62,6 @@ def _load_tm5_flex(path: str) -> pd.DataFrame:
         df["Date"] = df["DateTime"].dt.date
 
     return df
-
 
 
 def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, Any]:
