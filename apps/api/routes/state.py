@@ -1,22 +1,19 @@
-import sys
-from pathlib import Path
-ROOT_DIR = Path(__file__).resolve().parents[2]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-from typing import Dict, Any, List, Optional
+# apps/api/routes/state.py
+
+from __future__ import annotations
+
 import math
-from datetime import datetime
-from datetime import date
+from datetime import datetime, date
 from math import floor
+from typing import Dict, Any, List, Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+
 from probedge.infra.settings import SETTINGS
 from probedge.infra.logger import get_logger
 from probedge.storage.atomic_json import AtomicJSON
-from probedge.decision.portfolio_planner import (
-    build_portfolio_state_for_day,
-)
-
+from probedge.decision.plan_core import build_parity_plan
 
 log = get_logger(__name__)
 router = APIRouter()
@@ -61,7 +58,8 @@ def _effective_daily_risk_rs() -> int:
     if mode == "test":
         return int(getattr(SETTINGS, "risk_rs_test", 1000))
 
-    if hasattr(SETTINGS, "risk_budget_rs") and SETTINGS.risk_budget_rs:
+    # Preferred config hook
+    if getattr(SETTINGS, "risk_budget_rs", None):
         return int(SETTINGS.risk_budget_rs)
 
     # Fallback
@@ -142,7 +140,7 @@ def _apply_portfolio_split(
     - Risk per active trade = floor(daily_risk_rs / active_count).
     - Qty = floor(risk_per_trade / |entry - stop|).
     """
-    # Decide which date to use for the state payload
+    # Decide which date to use for the state payload (best-effort from any plan)
     day: Optional[str] = None
     for p in raw_plans:
         val = p.get("date")
@@ -167,6 +165,8 @@ def _apply_portfolio_split(
     risk_per_trade_rs = int(daily_risk_rs // active_count)
 
     adjusted: List[Dict[str, Any]] = []
+    total_planned = 0.0
+
     for idx, p in enumerate(raw_plans):
         q = dict(p)  # shallow copy
 
@@ -198,9 +198,12 @@ def _apply_portfolio_split(
             adjusted.append(q)
             continue
 
+        per_trade_risk = qty * risk_per_share
+        total_planned += per_trade_risk
+
         q["risk_per_share"] = risk_per_share
         q["qty"] = qty
-        q["per_trade_risk_rs_used"] = risk_per_trade_rs
+        q["per_trade_risk_rs_used"] = per_trade_risk
         q["parity_mode"] = True
 
         adjusted.append(q)
@@ -211,6 +214,7 @@ def _apply_portfolio_split(
         "daily_risk_rs": daily_risk_rs,
         "active_trades": active_count,
         "risk_per_trade_rs": risk_per_trade_rs,
+        "total_planned_risk_rs": total_planned,
         "plans": adjusted,
     }
 
@@ -218,6 +222,7 @@ def _apply_portfolio_split(
 # -------------------------------
 # 2) Existing parity endpoint
 # -------------------------------
+
 @router.get("/api/state")
 def api_state(
     day: Optional[date] = Query(None),
@@ -229,10 +234,25 @@ def api_state(
     If `risk` is provided, we override the daily risk budget and
     recompute qty + per_trade_risk purely from entry/stop.
     """
-    portfolio_state = build_portfolio_state_for_day(
-        day=day,
-        explicit_risk_rs=risk,
-    )
+    # Resolve day
+    day = day or date.today()
+    day_str = day.isoformat()
+
+    # 1) Build raw plans
+    raw_plans = _build_raw_plans_for_day(day_str)
+
+    # 2) Decide daily risk
+    if risk is not None:
+        daily_risk_rs = int(risk)
+    else:
+        daily_risk_rs = _effective_daily_risk_rs()
+
+    # 3) Apply portfolio split
+    portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
+
+    # Force portfolio date to requested day
+    portfolio_state["date"] = day_str
+
     return portfolio_state
 
 
@@ -298,18 +318,18 @@ def api_plan_arm_day(
     """
     Build the full 10-symbol parity plan for a specific trading day and
     persist it into live_state.json under 'portfolio_plan'.
+
+    - Uses the same logic as GET /api/state.
+    - If 'day' is omitted, uses today's date.
     """
     if day is None:
-        # use planner's default (today)
-        portfolio_state = build_portfolio_state_for_day(day=None)
-    else:
-        d = date.fromisoformat(day)
-        portfolio_state = build_portfolio_state_for_day(day=d)
+        day = _today_str()
 
-    # Persist into live_state.json
-    state = aj.read(default={})
-    state["portfolio_plan"] = portfolio_state
-    aj.write(state)
+    raw_plans = _build_raw_plans_for_day(day)
+    daily_risk_rs = _effective_daily_risk_rs()
+    portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
 
-    return portfolio_state
+    # Force portfolio date to the requested day (even if some symbols had older/latest data)
+    portfolio_state["date"] = day
 
+    return _write_portfolio_plan_to_state(portfolio_state)
