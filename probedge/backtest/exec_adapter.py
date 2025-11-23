@@ -120,4 +120,40 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     if w09.empty:
         raise RuntimeError(f"No 09:40–15:05 window for {symbol} on {day.date()}")
 
-    # --- 3) Determine earliest touches of
+    # --- 3) Determine earliest touches of stop/T1/T2 ---
+    touches = _earliest_touch_times(w09, long_side, stop, t1, t2)
+    ts_stop, ts_t1, ts_t2 = touches["stop"], touches["t1"], touches["t2"]
+
+    # Risk per share from entry/stop (same as batch)
+    risk_per_share = (entry - stop) if long_side else (stop - entry)
+    if not np.isfinite(risk_per_share) or risk_per_share <= 0:
+        raise RuntimeError(f"Bad risk_per_share for {symbol} on {day.date()}")
+
+    # --- 4) R1 PnL (1R target) ---
+    if ts_t1 is not None and (ts_stop is None or ts_t1 <= ts_stop):
+        # T1 hit before (or same bar as) stop
+        pnl_r1 = qty * (t1 - entry) if long_side else qty * (entry - t1)
+        r1 = "WIN"
+    elif ts_stop is not None and (ts_t1 is None or ts_stop < ts_t1):
+        # Stop hit first
+        pnl_r1 = -qty * risk_per_share
+        r1 = "LOSS"
+    else:
+        # Neither T1 nor stop hit → exit at 15:05 close
+        exit_px = float(w09["Close"].iloc[-1])
+        pnl_r1 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
+        r1 = "EOD"
+
+    # --- 5) R2 PnL (2R target) ---
+    if ts_t2 is not None and (ts_stop is None or ts_t2 <= ts_stop):
+        pnl_r2 = qty * (t2 - entry) if long_side else qty * (entry - t2)
+        r2 = "WIN"
+    elif ts_stop is not None and (ts_t2 is None or ts_stop < ts_t2):
+        pnl_r2 = -qty * risk_per_share
+        r2 = "LOSS"
+    else:
+        exit_px = float(w09["Close"].iloc[-1])
+        pnl_r2 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
+        r2 = "EOD"
+
+    return pnl_r1, pnl_r2, r1, r2, touches
