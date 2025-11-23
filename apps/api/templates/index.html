@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ProbEdge – 10 Stock Parity Terminal</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 1.5rem;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+    h1 {
+      margin-top: 0;
+      margin-bottom: 0.5rem;
+      font-size: 1.5rem;
+    }
+    h2 {
+      margin-top: 1.5rem;
+      margin-bottom: 0.5rem;
+      font-size: 1.1rem;
+    }
+    .card {
+      background: #020617;
+      border-radius: 0.75rem;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      border: 1px solid #1f2937;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+    }
+    .row > div {
+      min-width: 160px;
+    }
+    label {
+      font-size: 0.85rem;
+      color: #9ca3af;
+    }
+    input[type="date"] {
+      background: #020617;
+      border-radius: 0.5rem;
+      border: 1px solid #374151;
+      color: #e5e7eb;
+      padding: 0.35rem 0.5rem;
+      margin-top: 0.25rem;
+    }
+    button {
+      background: #22c55e;
+      border: none;
+      border-radius: 0.5rem;
+      padding: 0.4rem 0.9rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+      color: #020617;
+      font-weight: 600;
+    }
+    button:hover {
+      opacity: 0.9;
+    }
+    .status {
+      font-size: 0.85rem;
+      color: #9ca3af;
+      margin-left: 0.75rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+    }
+    thead {
+      background: #020617;
+    }
+    th, td {
+      border-bottom: 1px solid #1f2937;
+      padding: 0.35rem 0.4rem;
+      text-align: right;
+      white-space: nowrap;
+    }
+    th:first-child,
+    td:first-child {
+      text-align: left;
+    }
+    th {
+      font-weight: 500;
+      color: #9ca3af;
+    }
+    tr:nth-child(even) td {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    .pill {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .pill-bull {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+    }
+    .pill-bear {
+      background: rgba(248, 113, 113, 0.15);
+      color: #fca5a5;
+    }
+    .pill-abstain {
+      background: rgba(148, 163, 184, 0.2);
+      color: #cbd5f5;
+    }
+    pre {
+      background: #020617;
+      border-radius: 0.75rem;
+      padding: 0.75rem;
+      border: 1px solid #1f2937;
+      font-size: 0.7rem;
+      overflow-x: auto;
+      max-height: 300px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>ProbEdge – 10 Stock Parity Plan</h1>
+    <div class="row">
+      <div><strong>Mode:</strong> <span id="mode">—</span></div>
+      <div><strong>Daily risk:</strong> ₹<span id="dailyRisk">—</span></div>
+      <div style="flex: 1 1 auto;">
+        <strong>Symbols:</strong> <span id="symbols">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Controls</h2>
+    <div class="row">
+      <div>
+        <label for="dayInput">Day (YYYY-MM-DD)</label><br />
+        <input type="date" id="dayInput" />
+      </div>
+      <div>
+        <button id="loadBtn">Load /api/state</button>
+        <span class="status" id="status"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Risk overview</h2>
+    <div class="row">
+      <div><strong>Date:</strong> <span id="stateDate">—</span></div>
+      <div><strong>Active trades:</strong> <span id="activeTrades">0</span></div>
+      <div><strong>Risk per trade:</strong> ₹<span id="riskPerTrade">0</span></div>
+      <div>
+        <strong>Total planned risk:</strong>
+        ₹<span id="totalRisk">0</span>
+        <span style="color:#9ca3af;">/ ₹<span id="dailyRisk2">0</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Portfolio</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Pick</th>
+          <th>Conf%</th>
+          <th>Qty</th>
+          <th>Entry</th>
+          <th>Stop</th>
+          <th>T1</th>
+          <th>T2</th>
+          <th>Risk₹</th>
+        </tr>
+      </thead>
+      <tbody id="portfolioBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Raw /api/state JSON</h2>
+    <pre id="rawJson">{}</pre>
+  </div>
+
+  <script>
+    async function loadConfig() {
+      try {
+        const res = await fetch("/api/config");
+        const cfg = await res.json();
+        document.getElementById("mode").textContent = cfg.mode || "paper";
+        document.getElementById("dailyRisk").textContent = cfg.risk_budget_rs ?? "—";
+        document.getElementById("dailyRisk2").textContent = cfg.risk_budget_rs ?? "—";
+        document.getElementById("symbols").textContent = (cfg.symbols || []).join(", ");
+      } catch (err) {
+        document.getElementById("status").textContent = "Failed to load /api/config";
+      }
+    }
+
+    function formatNumber(x) {
+      if (x == null || isNaN(x)) return "-";
+      return Number(x).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+    }
+
+    function renderPortfolio(plans) {
+      const tbody = document.getElementById("portfolioBody");
+      tbody.innerHTML = "";
+
+      for (const p of plans) {
+        const tr = document.createElement("tr");
+
+        const symTd = document.createElement("td");
+        symTd.textContent = p.symbol;
+        tr.appendChild(symTd);
+
+        const pickTd = document.createElement("td");
+        const pill = document.createElement("span");
+        const pick = (p.pick || "ABSTAIN").toUpperCase();
+        pill.textContent = pick;
+        pill.classList.add("pill");
+        if (pick === "BULL") pill.classList.add("pill-bull");
+        else if (pick === "BEAR") pill.classList.add("pill-bear");
+        else pill.classList.add("pill-abstain");
+        pickTd.appendChild(pill);
+        tr.appendChild(pickTd);
+
+        const confTd = document.createElement("td");
+        confTd.textContent = p["confidence%"] ?? 0;
+        tr.appendChild(confTd);
+
+        const qtyTd = document.createElement("td");
+        qtyTd.textContent = p.qty ?? 0;
+        tr.appendChild(qtyTd);
+
+        const entryTd = document.createElement("td");
+        entryTd.textContent = p.entry != null ? formatNumber(p.entry) : "-";
+        tr.appendChild(entryTd);
+
+        const stopTd = document.createElement("td");
+        stopTd.textContent = p.stop != null ? formatNumber(p.stop) : "-";
+        tr.appendChild(stopTd);
+
+        const t1Td = document.createElement("td");
+        t1Td.textContent = p.target1 != null ? formatNumber(p.target1) : "-";
+        tr.appendChild(t1Td);
+
+        const t2Td = document.createElement("td");
+        t2Td.textContent = p.target2 != null ? formatNumber(p.target2) : "-";
+        tr.appendChild(t2Td);
+
+        const riskTd = document.createElement("td");
+        riskTd.textContent = formatNumber(p.per_trade_risk_rs_used ?? 0);
+        tr.appendChild(riskTd);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function loadState(day) {
+      const status = document.getElementById("status");
+      status.textContent = "Loading…";
+
+      try {
+        const res = await fetch("/api/state?day=" + encodeURIComponent(day));
+        const state = await res.json();
+
+        document.getElementById("rawJson").textContent = JSON.stringify(state, null, 2);
+
+        document.getElementById("stateDate").textContent = state.date || "—";
+        document.getElementById("activeTrades").textContent = state.active_trades ?? 0;
+        document.getElementById("riskPerTrade").textContent = formatNumber(state.risk_per_trade_rs ?? 0);
+
+        const totalRisk = (state.active_trades ?? 0) * (state.risk_per_trade_rs ?? 0);
+        document.getElementById("totalRisk").textContent = formatNumber(totalRisk);
+
+        // keep dailyRisk2 in sync even if backend returns something different from /api/config
+        if (state.daily_risk_rs != null) {
+          document.getElementById("dailyRisk2").textContent = formatNumber(state.daily_risk_rs);
+        }
+
+        renderPortfolio(state.plans || []);
+
+        status.textContent = "Loaded /api/state for " + (state.date || day);
+      } catch (err) {
+        console.error(err);
+        status.textContent = "Error loading /api/state";
+      }
+    }
+
+    document.getElementById("loadBtn").addEventListener("click", () => {
+      const dayInput = document.getElementById("dayInput");
+      const day = dayInput.value;
+      if (!day) {
+        alert("Please select a date.");
+        return;
+      }
+      loadState(day);
+    });
+
+    // On first load, set the date input to some known trading day so you see data immediately.
+    window.addEventListener("DOMContentLoaded", () => {
+      // You can change this default date to today when we go live.
+      document.getElementById("dayInput").value = "2025-08-05";
+      loadConfig();
+    });
+  </script>
+</body>
+</html>
