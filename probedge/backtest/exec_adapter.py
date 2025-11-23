@@ -8,12 +8,105 @@ import numpy as np
 import pandas as pd
 
 from probedge.infra.settings import SETTINGS
-from probedge.storage.readers import read_tm5_csv  # <-- reuse the proven reader
+
 
 
 # Match Colab backtest window: 09:40 → 15:05
 T0_M = 9 * 60 + 40  # 09:40
 T1_M = 15 * 60 + 5  # 15:05
+
+
+def _read_tm5(path: str) -> pd.DataFrame:
+    """
+    Robust 5-min reader copied from Colab batch backtest.
+    Handles BOM, weird column names, and builds DateTime + OHLCV.
+    """
+    df = pd.read_csv(path)
+    # Clean column names (strip BOM, spaces)
+    df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+    df = df.loc[:, ~pd.Index(df.columns).duplicated()]
+
+    lc2orig = {c.lower(): c for c in df.columns}
+
+    # 1) Try common datetime columns
+    dt = None
+    for key in ("datetime", "date_time", "timestamp", "date"):
+        if key in lc2orig:
+            dt = pd.to_datetime(df[lc2orig[key]], errors="coerce")
+            break
+
+    # 2) Try separate date + time columns
+    if dt is None and ("date" in lc2orig and "time" in lc2orig):
+        dt = pd.to_datetime(
+            df[lc2orig["date"]].astype(str) + " " + df[lc2orig["time"]].astype(str),
+            errors="coerce",
+        )
+
+    # 3) Try year/month/day/hour/minute style columns
+    parts = ["year", "month", "day", "hour", "minute"]
+    if dt is None and all(p in lc2orig for p in parts):
+        dt = pd.to_datetime(
+            dict(
+                year=df[lc2orig["year"]],
+                month=df[lc2orig["month"]],
+                day=df[lc2orig["day"]],
+                hour=df[lc2orig["hour"]],
+                minute=df[lc2orig["minute"]],
+            ),
+            errors="coerce",
+        )
+
+    if dt is None:
+        raise RuntimeError(f"No recognizable datetime columns in intraday file: {path}")
+
+    # Canonical DateTime column
+    for col in list(df.columns):
+        if col != "DateTime" and col.lower() in ("datetime", "date_time", "timestamp"):
+            df.drop(columns=col, inplace=True, errors="ignore")
+
+    if "DateTime" in df.columns:
+        df["DateTime"] = dt
+    else:
+        df.insert(0, "DateTime", dt)
+
+    # Map OHLCV
+    def pick(*aliases):
+        for a in aliases:
+            if a in lc2orig:
+                return lc2orig[a]
+        for c in df.columns:
+            if c.lower() in aliases:
+                return c
+        return None
+
+    col_map = {
+        "Open": pick("open", "o"),
+        "High": pick("high", "h"),
+        "Low": pick("low", "l"),
+        "Close": pick("close", "c"),
+        "Volume": pick("volume", "vol", "qty", "quantity"),
+    }
+
+    for k, v in col_map.items():
+        if v and v != k:
+            df.rename(columns={v: k}, inplace=True)
+
+    # Ensure numeric OHLCV
+    for k in ("Open", "High", "Low", "Close", "Volume"):
+        if k in df.columns:
+            df[k] = pd.to_numeric(df[k], errors="coerce")
+
+    # Drop junk, sort, and add Date / _mins
+    df = (
+        df.dropna(subset=["DateTime", "Open", "High", "Low", "Close"])
+        .sort_values("DateTime")
+        .reset_index(drop=True)
+    )
+
+    # IST-naive: treat as wall-clock, no tz conversion
+    df["Date"] = df["DateTime"].dt.normalize()
+    df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
+    return df
 
 
 def _slice_window_fast(df_day: pd.DataFrame, m0: int, m1: int) -> pd.DataFrame:
@@ -59,17 +152,21 @@ def _earliest_touch_times(
     }
 
 
+from probedge.infra.settings import SETTINGS
+from probedge.infra.logger import get_logger
+
+log = get_logger(__name__)
+
 def _load_tm5_for_symbol(symbol: str) -> pd.DataFrame:
     """
-    Load TM5 intraday file for a symbol using the SAME reader as plan_core:
-    probedge.storage.readers.read_tm5_csv.
-
-    This guarantees we handle whatever datetime layout your CSVs actually have.
+    Load intraday 5-min data for a symbol using the same path pattern
+    as the rest of the app, then parse it with the Colab _read_tm5.
     """
-    path_tpl = SETTINGS.paths.intraday or "data/intraday/{sym}_5minute.csv"
-    path = path_tpl.format(sym=symbol)
+    pattern = SETTINGS.paths.intraday or "data/intraday/{sym}_5minute.csv"
+    path = pattern.format(sym=symbol)
+    log.info("[exec_adapter] loading intraday tm5 for %s from %s", symbol, path)
+    return _read_tm5(path)
 
-    df = read_tm5_csv(path)  # <-- canonical reader
 
     # Ensure the columns we need for Colab-style backtest exist
     if "DateTime" not in df.columns:
