@@ -1,7 +1,7 @@
 # apps/runtime/daily_timeline.py
 
 from __future__ import annotations
-
+from probedge.journal.writer import append_portfolio_plan
 import argparse
 from datetime import date, datetime, time as dtime
 from typing import Optional
@@ -70,6 +70,18 @@ def arm_portfolio_for_day(
         plan.get("active_trades"),
         plan.get("total_planned_risk_rs"),
     )
+
+        # --- NEW: journal the portfolio plan (paper OMS v0) ---
+    try:
+        written = append_portfolio_plan(portfolio_state)
+        log.info(
+            "Journaled %d planned trades to %s",
+            written,
+            SETTINGS.paths.journal,
+        )
+    except Exception:
+        log.exception("Failed to append portfolio_plan to journal")
+
 
     return plan
 
