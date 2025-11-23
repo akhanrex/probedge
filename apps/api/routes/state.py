@@ -11,9 +11,12 @@ from math import floor
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from probedge.infra.settings import SETTINGS
-from probedge.decision.plan_core import build_parity_plan
 from probedge.infra.logger import get_logger
 from probedge.storage.atomic_json import AtomicJSON
+from probedge.decision.portfolio_planner import (
+    build_portfolio_state_for_day,
+)
+
 
 log = get_logger(__name__)
 router = APIRouter()
@@ -215,8 +218,6 @@ def _apply_portfolio_split(
 # -------------------------------
 # 2) Existing parity endpoint
 # -------------------------------
-
-
 @router.get("/api/state")
 def api_state(
     day: Optional[date] = Query(None),
@@ -228,74 +229,11 @@ def api_state(
     If `risk` is provided, we override the daily risk budget and
     recompute qty + per_trade_risk purely from entry/stop.
     """
-    settings = SETTINGS
-    day = day or date.today()
-
-    # Build raw plans (tags, pick, entry/stop/targets etc) for each symbol
-    raw_plans = _build_raw_plans_for_day(day)
-
-    # 1) Choose daily risk: override if query param is given
-    daily_risk = int(risk) if risk is not None else int(settings.risk_budget_rs)
-
-    # 2) Identify active picks that can actually take risk
-    active_plans = [
-        p
-        for p in raw_plans
-        if p.get("pick") in ("BULL", "BEAR")
-        and p.get("entry") is not None
-        and p.get("stop") is not None
-    ]
-    active_trades = len(active_plans)
-
-    # 3) Equal-split risk across active trades
-    if active_trades > 0 and daily_risk > 0:
-        risk_per_trade = daily_risk // active_trades
-    else:
-        risk_per_trade = 0
-
-    # 4) Recompute qty + per_trade_risk from entry/stop and risk_per_trade
-    total_planned = 0.0
-    for p in raw_plans:
-        is_active = (
-            p.get("pick") in ("BULL", "BEAR")
-            and p.get("entry") is not None
-            and p.get("stop") is not None
-            and risk_per_trade > 0
-        )
-
-        if is_active:
-            entry = float(p["entry"])
-            stop = float(p["stop"])
-            risk_per_share = abs(entry - stop)
-
-            if risk_per_share <= 0:
-                qty = 0
-            else:
-                qty = int(floor(risk_per_trade / risk_per_share))
-
-            per_trade_risk = qty * risk_per_share
-
-            p["risk_per_share"] = risk_per_share
-            p["qty"] = qty
-            p["per_trade_risk_rs_used"] = per_trade_risk
-            p["parity_mode"] = True
-
-            total_planned += per_trade_risk
-        else:
-            # No risk allocation for this symbol
-            p["qty"] = 0
-            p["per_trade_risk_rs_used"] = 0
-            p["parity_mode"] = False
-
-    return {
-        "date": day.isoformat(),
-        "mode": settings.mode,
-        "daily_risk_rs": daily_risk,
-        "active_trades": active_trades,
-        "risk_per_trade_rs": risk_per_trade,
-        "total_planned_risk_rs": total_planned,
-        "plans": raw_plans,
-    }
+    portfolio_state = build_portfolio_state_for_day(
+        day=day,
+        explicit_risk_rs=risk,
+    )
+    return portfolio_state
 
 
 # -------------------------------
@@ -360,18 +298,18 @@ def api_plan_arm_day(
     """
     Build the full 10-symbol parity plan for a specific trading day and
     persist it into live_state.json under 'portfolio_plan'.
-
-    - Uses the same logic as GET /api/state.
-    - If 'day' is omitted, uses today's date.
     """
     if day is None:
-        day = _today_str()
+        # use planner's default (today)
+        portfolio_state = build_portfolio_state_for_day(day=None)
+    else:
+        d = date.fromisoformat(day)
+        portfolio_state = build_portfolio_state_for_day(day=d)
 
-    raw_plans = _build_raw_plans_for_day(day)
-    daily_risk_rs = _effective_daily_risk_rs()
-    portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
+    # Persist into live_state.json
+    state = aj.read(default={})
+    state["portfolio_plan"] = portfolio_state
+    aj.write(state)
 
-    # Force portfolio date to the requested day (even if some symbols had older/latest data)
-    portfolio_state["date"] = day
+    return portfolio_state
 
-    return _write_portfolio_plan_to_state(portfolio_state)
