@@ -2,115 +2,22 @@
 
 from __future__ import annotations
 
-import math
 from typing import Dict
 
 import numpy as np
 import pandas as pd
 
 from probedge.infra.settings import SETTINGS
+from probedge.storage.readers import read_tm5_csv  # <-- reuse the proven reader
 
-# Match Colab constants
+
+# Match Colab backtest window: 09:40 → 15:05
 T0_M = 9 * 60 + 40  # 09:40
 T1_M = 15 * 60 + 5  # 15:05
-NEAR_ZERO_BAND = 0.20
-CLOSE_PCT = 0.0025
-CLOSE_FR_ORB = 0.20
-
-
-def _read_tm5(path: str) -> pd.DataFrame:
-    """Robust 5-min reader – same logic as Colab _read_tm5(path)."""
-    df = pd.read_csv(path)
-
-    # Clean column names (strip BOM, spaces)
-    df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
-    # Drop duplicate columns (keep first)
-    df = df.loc[:, ~pd.Index(df.columns).duplicated()]
-
-    lc2orig = {c.lower(): c for c in df.columns}
-    dt = None
-
-    # Common single datetime-like column names
-    for key in ("datetime", "date_time", "timestamp"):
-        if key in lc2orig:
-            dt = pd.to_datetime(df[lc2orig[key]], errors="coerce")
-            break
-
-    # Fallback: separate date + time columns
-    if dt is None and ("date" in lc2orig and "time" in lc2orig):
-        dt = pd.to_datetime(
-            df[lc2orig["date"]].astype(str)
-            + " "
-            + df[lc2orig["time"]].astype(str),
-            errors="coerce",
-        )
-
-    # Fallback: year,month,day,hour,minute
-    parts = ["year", "month", "day", "hour", "minute"]
-    if dt is None and all(p in lc2orig for p in parts):
-        dt = pd.to_datetime(
-            dict(
-                year=df[lc2orig["year"]],
-                month=df[lc2orig["month"]],
-                day=df[lc2orig["day"]],
-                hour=df[lc2orig["hour"]],
-                minute=df[lc2orig["minute"]],
-            ),
-            errors="coerce",
-        )
-
-    if dt is None:
-        raise RuntimeError(f"No recognizable datetime columns in intraday file: {path}")
-
-    # Remove any other datetime-like columns; keep canonical DateTime
-    for col in list(df.columns):
-        if col != "DateTime" and col.lower() in ("datetime", "date_time", "timestamp"):
-            df.drop(columns=col, inplace=True, errors="ignore")
-
-    if "DateTime" in df.columns:
-        df["DateTime"] = dt
-    else:
-        df.insert(0, "DateTime", dt)
-
-    # Map OHLCV aliases to canonical names
-    def pick(*aliases):
-        for a in aliases:
-            if a in lc2orig:
-                return lc2orig[a]
-        for c in df.columns:
-            if c.lower() in aliases:
-                return c
-        return None
-
-    col_map = {
-        "Open": pick("open", "o"),
-        "High": pick("high", "h"),
-        "Low": pick("low", "l"),
-        "Close": pick("close", "c"),
-        "Volume": pick("volume", "vol", "qty", "quantity"),
-    }
-
-    for k, v in col_map.items():
-        if v and v != k:
-            df.rename(columns={v: k}, inplace=True)
-
-    for k in ("Open", "High", "Low", "Close", "Volume"):
-        if k in df.columns:
-            df[k] = pd.to_numeric(df[k], errors="coerce")
-
-    df = (
-        df.dropna(subset=["DateTime", "Open", "High", "Low", "Close"])
-        .sort_values("DateTime")
-        .reset_index(drop=True)
-    )
-
-    # IST-naive handling: same as Colab
-    df["Date"] = df["DateTime"].dt.normalize()
-    df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
-    return df
 
 
 def _slice_window_fast(df_day: pd.DataFrame, m0: int, m1: int) -> pd.DataFrame:
+    """Slice a single-day TM5 frame between minute offsets [m0, m1]."""
     if df_day is None or df_day.empty:
         return pd.DataFrame()
     m = (df_day["_mins"] >= m0) & (df_day["_mins"] <= m1)
@@ -120,9 +27,10 @@ def _slice_window_fast(df_day: pd.DataFrame, m0: int, m1: int) -> pd.DataFrame:
 def _earliest_touch_times(
     win: pd.DataFrame, long: bool, stop: float, t1: float, t2: float
 ) -> Dict[str, pd.Timestamp | None]:
-    """Earliest times price touches stop, T1, T2 in 09:40→15:05 window.
+    """
+    Earliest times price touches stop, T1, T2 in 09:40→15:05.
 
-    This is lifted from the Colab backtest code.
+    This is the same logic as in your Colab batch backtest.
     """
     if win is None or win.empty:
         return {"stop": None, "t1": None, "t2": None}
@@ -152,19 +60,41 @@ def _earliest_touch_times(
 
 
 def _load_tm5_for_symbol(symbol: str) -> pd.DataFrame:
-    """Load TM5 intraday file for a symbol using SETTINGS.paths.intraday."""
+    """
+    Load TM5 intraday file for a symbol using the SAME reader as plan_core:
+    probedge.storage.readers.read_tm5_csv.
+
+    This guarantees we handle whatever datetime layout your CSVs actually have.
+    """
     path_tpl = SETTINGS.paths.intraday or "data/intraday/{sym}_5minute.csv"
     path = path_tpl.format(sym=symbol)
-    return _read_tm5(path)
+
+    df = read_tm5_csv(path)  # <-- canonical reader
+
+    # Ensure the columns we need for Colab-style backtest exist
+    if "DateTime" not in df.columns:
+        raise RuntimeError(
+            f"read_tm5_csv returned no DateTime column for {symbol} ({path})"
+        )
+
+    if "Date" not in df.columns:
+        df["Date"] = df["DateTime"].dt.normalize()
+
+    if "_mins" not in df.columns:
+        df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
+
+    return df
 
 
 def simulate_trade_colab_style(trade_row, intraday_raw=None):
-    """Simulate a single trade using the same R1/R2 logic as the Colab backtest.
+    """
+    Simulate a single trade using the SAME R1/R2 resolution logic
+    as your Colab backtest code.
 
     Returns:
         (pnl_r1, pnl_r2, r1_result, r2_result, hit_times_dict)
     """
-    # Extract journal fields
+    # --- 1) Extract journal fields (from data/journal/journal.csv) ---
     symbol = str(trade_row["symbol"])
     day = pd.to_datetime(trade_row["day"]).normalize()
 
@@ -177,7 +107,7 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     t1 = float(trade_row["target1"])
     t2 = float(trade_row["target2"])
 
-    # Read TM5 fresh using the robust loader (ignore intraday_raw)
+    # --- 2) Load TM5 for that symbol+day using the canonical reader ---
     tm5 = _load_tm5_for_symbol(symbol)
 
     # Filter to this trading day
@@ -185,42 +115,9 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     if day_df.empty:
         raise RuntimeError(f"No intraday TM5 data for {symbol} on {day.date()}")
 
-    # 09:40→15:05 window
+    # Slice 09:40→15:05 window (matches Colab backtest)
     w09 = _slice_window_fast(day_df, T0_M, T1_M)
     if w09.empty:
         raise RuntimeError(f"No 09:40–15:05 window for {symbol} on {day.date()}")
 
-    # Determine earliest touches of stop/T1/T2
-    touches = _earliest_touch_times(w09, long_side, stop, t1, t2)
-    ts_stop, ts_t1, ts_t2 = touches["stop"], touches["t1"], touches["t2"]
-
-    # Risk per share from entry/stop (same as batch)
-    risk_per_share = (entry - stop) if long_side else (stop - entry)
-    if not np.isfinite(risk_per_share) or risk_per_share <= 0:
-        raise RuntimeError(f"Bad risk_per_share for {symbol} on {day.date()}")
-
-    # R1 PnL
-    if ts_t1 is not None and (ts_stop is None or ts_t1 <= ts_stop):
-        pnl_r1 = qty * (t1 - entry) if long_side else qty * (entry - t1)
-        r1 = "WIN"
-    elif ts_stop is not None and (ts_t1 is None or ts_stop < ts_t1):
-        pnl_r1 = -qty * risk_per_share
-        r1 = "LOSS"
-    else:
-        exit_px = float(w09["Close"].iloc[-1])
-        pnl_r1 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
-        r1 = "EOD"
-
-    # R2 PnL
-    if ts_t2 is not None and (ts_stop is None or ts_t2 <= ts_stop):
-        pnl_r2 = qty * (t2 - entry) if long_side else qty * (entry - t2)
-        r2 = "WIN"
-    elif ts_stop is not None and (ts_t2 is None or ts_stop < ts_t2):
-        pnl_r2 = -qty * risk_per_share
-        r2 = "LOSS"
-    else:
-        exit_px = float(w09["Close"].iloc[-1])
-        pnl_r2 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
-        r2 = "EOD"
-
-    return pnl_r1, pnl_r2, r1, r2, touches
+    # --- 3) Determine earliest touches of
