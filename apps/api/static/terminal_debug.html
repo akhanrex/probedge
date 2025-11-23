@@ -135,19 +135,23 @@
     </div>
   </div>
 
-  <div class="card">
-    <h2>Controls</h2>
-    <div class="row">
-      <div>
-        <label for="dayInput">Day (YYYY-MM-DD)</label><br />
-        <input type="date" id="dayInput" />
-      </div>
-      <div>
-        <button id="loadBtn">Load /api/state</button>
-        <span class="status" id="status"></span>
-      </div>
+<div class="card">
+  <h2>Controls</h2>
+  <div class="row">
+    <div>
+      <label for="dayInput">Day (YYYY-MM-DD)</label><br />
+      <input type="date" id="dayInput" />
+    </div>
+    <div>
+      <label for="riskInput">Daily risk (₹)</label><br />
+      <input type="number" id="riskInput" min="0" step="500" />
+    </div>
+    <div>
+      <button id="loadBtn">Load /api/state</button>
+      <span class="status" id="status"></span>
     </div>
   </div>
+</div>
 
   <div class="card">
     <h2>Risk overview</h2>
@@ -197,10 +201,16 @@
         document.getElementById("dailyRisk").textContent = cfg.risk_budget_rs ?? "—";
         document.getElementById("dailyRisk2").textContent = cfg.risk_budget_rs ?? "—";
         document.getElementById("symbols").textContent = (cfg.symbols || []).join(", ");
+    
+        const riskInput = document.getElementById("riskInput");
+        if (cfg.risk_budget_rs != null && !riskInput.value) {
+          riskInput.value = cfg.risk_budget_rs;
+        }
       } catch (err) {
         document.getElementById("status").textContent = "Failed to load /api/config";
       }
     }
+
 
     function formatNumber(x) {
       if (x == null || isNaN(x)) return "-";
@@ -264,13 +274,23 @@
     async function loadState(day) {
       const status = document.getElementById("status");
       status.textContent = "Loading…";
-
+    
       try {
-        const res = await fetch("/api/state?day=" + encodeURIComponent(day));
+        const riskInput = document.getElementById("riskInput");
+        const risk = (riskInput.value || "").trim();
+        const url =
+          "/api/state?day=" +
+          encodeURIComponent(day) +
+          (risk ? "&risk=" + encodeURIComponent(risk) : "");
+    
+        const res = await fetch(url);
         const state = await res.json();
-
+    
+        if (state.daily_risk_rs != null) {
+          document.getElementById("riskInput").value = state.daily_risk_rs;
+        }
+    
         document.getElementById("rawJson").textContent = JSON.stringify(state, null, 2);
-
         document.getElementById("stateDate").textContent = state.date || "—";
         document.getElementById("activeTrades").textContent = state.active_trades ?? 0;
         document.getElementById("riskPerTrade").textContent = formatNumber(state.risk_per_trade_rs ?? 0);
