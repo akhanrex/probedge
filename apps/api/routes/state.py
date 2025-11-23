@@ -9,7 +9,6 @@ from datetime import datetime
 from datetime import date
 from math import floor
 from fastapi import APIRouter, HTTPException, Query
-from infra.config import get_settings
 from pydantic import BaseModel
 from probedge.infra.settings import SETTINGS
 from probedge.decision.plan_core import build_parity_plan
@@ -229,7 +228,7 @@ def api_state(
     If `risk` is provided, we override the daily risk budget and
     recompute qty + per_trade_risk purely from entry/stop.
     """
-    settings = get_settings()
+    settings = SETTINGS
     day = day or date.today()
 
     # Build raw plans (tags, pick, entry/stop/targets etc) for each symbol
