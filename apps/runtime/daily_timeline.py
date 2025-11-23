@@ -65,25 +65,25 @@ def arm_portfolio_for_day(
 
     log.info(
         "Portfolio plan built for day %s: daily_risk=%s, active_trades=%s, total_planned=%s",
-        plan.get("date"),
-        plan.get("daily_risk_rs"),
-        plan.get("active_trades"),
-        plan.get("total_planned_risk_rs"),
+        day,
+        portfolio_plan["daily_risk_rs"],
+        portfolio_plan["active_trades"],
+        portfolio_plan["total_planned_risk_rs"],
     )
 
-        # --- NEW: journal the portfolio plan (paper OMS v0) ---
+    # --- journal the portfolio plan ---
     try:
-        written = append_portfolio_plan(portfolio_state)
+        written = append_portfolio_plan(portfolio_plan)
         log.info(
-            "Journaled %d planned trades to %s",
+            "Journaled %d planned trades to %s for day=%s",
             written,
             SETTINGS.paths.journal,
+            day,
         )
     except Exception:
         log.exception("Failed to append portfolio_plan to journal")
 
-
-    return plan
+    return portfolio_plan
 
 
 def main():
