@@ -1,5 +1,7 @@
 import math
-from typing import Optional, Dict, Any
+from dataclasses import dataclass
+from datetime import date, datetime, time as dtime
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -7,6 +9,8 @@ import pandas as pd
 from probedge.storage.resolver import locate_for_read
 from probedge.infra.constants import CLOSE_PCT, CLOSE_FR_ORB
 from probedge.infra.settings import SETTINGS
+from ..infra.logger import get_logger
+from ..infra.loaders import read_tm5_csv
 
 from probedge.decision.classifiers_robust import (
     prev_trading_day_ohlc,
@@ -40,68 +44,22 @@ def _effective_daily_risk_rs() -> int:
         return 1000
     return int(getattr(SETTINGS, "risk_budget_rs", 10000))
 
-def _load_tm5_flex(path) -> pd.DataFrame:
+def _load_tm5_flex(path: str) -> pd.DataFrame:
     """
-    Robust TM5 loader for intraday 5-min CSVs.
+    Single source of truth TM5 loader for the planner.
 
-    - Accepts many datetime column naming styles (datetime / DateTime / date_time / timestamp / ts).
-    - Or a separate Date + Time (any case) pair.
-    - Returns DataFrame with:
-        * DateTime (tz-naive)
-        * Date      (normalized Timestamp)
-        * __date    (python date)
-        * _mins     (int minutes from midnight)
+    Uses infra.loaders.read_tm5_csv so that /api/state, /api/plan/*,
+    backtests etc all see identical intraday bars (DateTime, Date, OHLC).
     """
-    df = pd.read_csv(path)
+    logger.info("[_load_tm5_flex] reading tm5 via read_tm5_csv: %s", path)
+    df = read_tm5_csv(path)
 
-    # ---- 1) Try single datetime-like column (case-insensitive) ----
-    dt_col = None
-    preferred_lower = {"datetime", "date_time", "timestamp", "ts"}
-    for c in df.columns:
-        if c.lower() in preferred_lower:
-            dt_col = c
-            break
-
-    dt = None
-
-    if dt_col is not None:
-        # Found a datetime-like column by name
-        dt = pd.to_datetime(df[dt_col], errors="coerce")
-        if dt.isna().all():
-            raise ValueError(f"Cannot parse datetime values in TM5: {path}")
-    else:
-        # ---- 2) Try generic "date" + "time" pair (case-insensitive) ----
-        cols_lower = {c.lower(): c for c in df.columns}
-        if "date" in cols_lower and "time" in cols_lower:
-            c_date = cols_lower["date"]
-            c_time = cols_lower["time"]
-            dt = pd.to_datetime(
-                df[c_date].astype(str) + " " + df[c_time].astype(str),
-                errors="coerce",
-            )
-            if dt.isna().all():
-                raise ValueError(f"Cannot parse datetime from Date+Time in TM5: {path}")
-        else:
-            # ---- 3) Last resort: scan for any parseable datetime column ----
-            for c in df.columns:
-                try:
-                    test = pd.to_datetime(df[c], errors="coerce")
-                except Exception:
-                    continue
-                if not test.isna().all():
-                    dt = test
-                    break
-
-            if dt is None or dt.isna().all():
-                raise ValueError(f"Cannot locate datetime columns in TM5: {path}")
-
-    # At this point, dt is a valid datetime Series
-    df["DateTime"] = dt
-    df["Date"] = df["DateTime"].dt.normalize()    # Timestamp (YYYY-MM-DD 00:00:00)
-    df["__date"] = df["DateTime"].dt.date         # python date (YYYY-MM-DD)
-    df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
+    # Safety: ensure we have a plain date column.
+    if "Date" not in df.columns:
+        df["Date"] = df["DateTime"].dt.date
 
     return df
+
 
 
 def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, Any]:
