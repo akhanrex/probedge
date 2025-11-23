@@ -120,6 +120,13 @@
       <input id="riskInput" type="number" min="0" step="1000" />
       <button id="btnLoadState">Load /api/state</button>
     </div>
+
+    <!-- NEW: ARM DAY BUTTON + STATUS -->
+    <div style="margin-top: 8px;">
+      <button id="btnArmDay">ARM day → portfolio_plan + journal</button>
+    </div>
+    <div id="armResult" class="summary"></div>
+
     <div id="controlsError" class="error"></div>
   </div>
 
@@ -229,24 +236,24 @@
         tr.appendChild(tdQty);
 
         const tdEntry = document.createElement("td");
-        tdEntry.textContent = p.entry != null ? p.entry.toFixed?.(2) ?? p.entry : "";
+        tdEntry.textContent = p.entry != null ? (p.entry.toFixed?.(2) ?? p.entry) : "";
         tr.appendChild(tdEntry);
 
         const tdStop = document.createElement("td");
-        tdStop.textContent = p.stop != null ? p.stop.toFixed?.(2) ?? p.stop : "";
+        tdStop.textContent = p.stop != null ? (p.stop.toFixed?.(2) ?? p.stop) : "";
         tr.appendChild(tdStop);
 
         const tdT1 = document.createElement("td");
-        tdT1.textContent = p.target1 != null ? p.target1.toFixed?.(2) ?? p.target1 : "";
+        tdT1.textContent = p.target1 != null ? (p.target1.toFixed?.(2) ?? p.target1) : "";
         tr.appendChild(tdT1);
 
         const tdT2 = document.createElement("td");
-        tdT2.textContent = p.target2 != null ? p.target2.toFixed?.(2) ?? p.target2 : "";
+        tdT2.textContent = p.target2 != null ? (p.target2.toFixed?.(2) ?? p.target2) : "";
         tr.appendChild(tdT2);
 
         const tdRisk = document.createElement("td");
         const r = p.per_trade_risk_rs_used != null ? p.per_trade_risk_rs_used : 0;
-        tdRisk.textContent = r ? r.toFixed?.(2) ?? r : "0";
+        tdRisk.textContent = r ? (r.toFixed?.(2) ?? r) : "0";
         tr.appendChild(tdRisk);
 
         const tdParity = document.createElement("td");
@@ -305,7 +312,7 @@
 
         if (!data.portfolio_plan) {
           errDiv.textContent =
-            "No portfolio_plan found in live_state.json. Run apps.runtime.daily_timeline first.";
+            "No portfolio_plan found in live_state.json. Run ARM (button or daily_timeline) first.";
           document.getElementById("lockedPortfolioBody").innerHTML = "";
           document.getElementById("lockedSummary").textContent = "";
           return;
@@ -324,6 +331,48 @@
       }
     }
 
+    // NEW: ARM DAY HANDLER
+    async function armDay() {
+      const day = document.getElementById("dayInput").value.trim();
+      const riskStr = document.getElementById("riskInput").value.trim();
+      const errDiv = document.getElementById("controlsError");
+      const armDiv = document.getElementById("armResult");
+      errDiv.textContent = "";
+      armDiv.textContent = "";
+
+      if (!day) {
+        errDiv.textContent = "Please enter a day (YYYY-MM-DD).";
+        return;
+      }
+
+      let url = `/api/plan/arm_day?day=${encodeURIComponent(day)}`;
+      if (riskStr) {
+        const riskVal = parseInt(riskStr, 10);
+        if (!Number.isFinite(riskVal) || riskVal < 0) {
+          errDiv.textContent = "Invalid risk value.";
+          return;
+        }
+        url += `&risk=${riskVal}`;
+      }
+
+      try {
+        const resp = await fetch(url, { method: "POST" });
+        if (!resp.ok) {
+          const text = await resp.text();
+          armDiv.textContent = `ARM failed: HTTP ${resp.status} - ${text}`;
+          return;
+        }
+        const data = await resp.json();
+        const summary = `ARMED for ${data.date} | Daily risk: ₹${data.daily_risk_rs} | Active trades: ${data.active_trades} | Risk/trade: ₹${data.risk_per_trade_rs} | Planned: ₹${(data.total_planned_risk_rs || 0).toFixed(2)}`;
+        armDiv.textContent = summary;
+
+        // Refresh locked view so you immediately see the saved plan
+        await loadLocked();
+      } catch (err) {
+        armDiv.textContent = "Error arming day: " + err;
+      }
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
       loadConfig();
       document
@@ -332,6 +381,9 @@
       document
         .getElementById("btnLoadLocked")
         .addEventListener("click", loadLocked);
+      document
+        .getElementById("btnArmDay")
+        .addEventListener("click", armDay);
     });
   </script>
 </body>
