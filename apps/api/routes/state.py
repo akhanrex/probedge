@@ -1,15 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+import sys
+from pathlib import Path
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 from typing import Dict, Any, List, Optional
 import math
 from datetime import datetime
 from datetime import date
 from math import floor
-
-from fastapi import APIRouter, Query
-
+from fastapi import APIRouter, HTTPException, Query
 from infra.config import get_settings
-
+from pydantic import BaseModel
 from probedge.infra.settings import SETTINGS
 from probedge.decision.plan_core import build_parity_plan
 from probedge.infra.logger import get_logger
