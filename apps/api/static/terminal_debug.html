@@ -2,173 +2,131 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>ProbEdge – 10 Stock Parity Terminal</title>
+  <title>Probedge Terminal Debug</title>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 1.5rem;
-      background: #0f172a;
-      color: #e5e7eb;
+      margin: 16px;
+      background: #050b10;
+      color: #f7fafc;
+    }
+    h1, h2, h3 {
+      margin: 0 0 8px;
     }
     h1 {
-      margin-top: 0;
-      margin-bottom: 0.5rem;
-      font-size: 1.5rem;
+      margin-bottom: 16px;
     }
-    h2 {
-      margin-top: 1.5rem;
-      margin-bottom: 0.5rem;
-      font-size: 1.1rem;
-    }
-    .card {
-      background: #020617;
-      border-radius: 0.75rem;
-      padding: 1rem 1.25rem;
-      margin-bottom: 1rem;
-      border: 1px solid #1f2937;
-    }
-    .row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem;
-      align-items: center;
-    }
-    .row > div {
-      min-width: 160px;
+    .section {
+      margin-bottom: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #0b1724;
+      border: 1px solid #1a2735;
     }
     label {
-      font-size: 0.85rem;
-      color: #9ca3af;
+      margin-right: 8px;
     }
-    input[type="date"] {
-      background: #020617;
-      border-radius: 0.5rem;
-      border: 1px solid #374151;
-      color: #e5e7eb;
-      padding: 0.35rem 0.5rem;
-      margin-top: 0.25rem;
+    input {
+      padding: 4px 6px;
+      margin-right: 8px;
+      border-radius: 4px;
+      border: 1px solid #2d3748;
+      background: #050b10;
+      color: #e2e8f0;
     }
     button {
-      background: #22c55e;
-      border: none;
-      border-radius: 0.5rem;
-      padding: 0.4rem 0.9rem;
-      font-size: 0.9rem;
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid #2d3748;
+      background: #1a202c;
+      color: #edf2f7;
       cursor: pointer;
-      color: #020617;
-      font-weight: 600;
+      font-weight: 500;
     }
     button:hover {
-      opacity: 0.9;
-    }
-    .status {
-      font-size: 0.85rem;
-      color: #9ca3af;
-      margin-left: 0.75rem;
+      background: #2d3748;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.85rem;
-      margin-top: 0.5rem;
-    }
-    thead {
-      background: #020617;
+      margin-top: 8px;
+      font-size: 13px;
     }
     th, td {
-      border-bottom: 1px solid #1f2937;
-      padding: 0.35rem 0.4rem;
+      border: 1px solid #2d3748;
+      padding: 4px 6px;
       text-align: right;
       white-space: nowrap;
     }
-    th:first-child,
-    td:first-child {
-      text-align: left;
-    }
     th {
-      font-weight: 500;
-      color: #9ca3af;
+      background: #111827;
+      text-align: center;
     }
-    tr:nth-child(even) td {
-      background: rgba(15, 23, 42, 0.6);
-    }
-    .pill {
-      display: inline-block;
-      padding: 0.1rem 0.45rem;
-      border-radius: 999px;
-      font-size: 0.75rem;
+    td.symbol {
+      text-align: left;
       font-weight: 600;
     }
-    .pill-bull {
-      background: rgba(34, 197, 94, 0.15);
-      color: #4ade80;
+    td.pick-bull {
+      color: #48bb78;
+      font-weight: 600;
     }
-    .pill-bear {
-      background: rgba(248, 113, 113, 0.15);
-      color: #fca5a5;
+    td.pick-bear {
+      color: #f56565;
+      font-weight: 600;
     }
-    .pill-abstain {
-      background: rgba(148, 163, 184, 0.2);
-      color: #cbd5f5;
+    td.pick-abstain {
+      color: #a0aec0;
+      font-weight: 600;
     }
     pre {
       background: #020617;
-      border-radius: 0.75rem;
-      padding: 0.75rem;
-      border: 1px solid #1f2937;
-      font-size: 0.7rem;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #1a2735;
+      font-size: 12px;
       overflow-x: auto;
-      max-height: 300px;
+      white-space: pre;
+      max-height: 320px;
+    }
+    .summary {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #a0aec0;
+    }
+    .error {
+      color: #feb2b2;
+      font-size: 13px;
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>ProbEdge – 10 Stock Parity Plan</h1>
-    <div class="row">
-      <div><strong>Mode:</strong> <span id="mode">—</span></div>
-      <div><strong>Daily risk:</strong> ₹<span id="dailyRisk">—</span></div>
-      <div style="flex: 1 1 auto;">
-        <strong>Symbols:</strong> <span id="symbols">—</span>
-      </div>
-    </div>
+  <h1>Probedge Terminal Debug</h1>
+
+  <!-- CONFIG -->
+  <div class="section">
+    <h2>Config (/api/config)</h2>
+    <pre id="configBlock">Loading...</pre>
   </div>
 
-<div class="card">
-  <h2>Controls</h2>
-  <div class="row">
+  <!-- CONTROLS -->
+  <div class="section">
+    <h2>Controls</h2>
     <div>
-      <label for="dayInput">Day (YYYY-MM-DD)</label><br />
-      <input type="date" id="dayInput" />
+      <label for="dayInput">Day (YYYY-MM-DD)</label>
+      <input id="dayInput" type="text" value="" placeholder="2025-08-05" />
     </div>
-    <div>
-      <label for="riskInput">Daily risk (₹)</label><br />
-      <input type="number" id="riskInput" min="0" step="500" />
+    <div style="margin-top: 8px;">
+      <label for="riskInput">Daily risk ₹</label>
+      <input id="riskInput" type="number" min="0" step="1000" />
+      <button id="btnLoadState">Load /api/state</button>
     </div>
-    <div>
-      <button id="loadBtn">Load /api/state</button>
-      <span class="status" id="status"></span>
-    </div>
-  </div>
-</div>
-
-  <div class="card">
-    <h2>Risk overview</h2>
-    <div class="row">
-      <div><strong>Date:</strong> <span id="stateDate">—</span></div>
-      <div><strong>Active trades:</strong> <span id="activeTrades">0</span></div>
-      <div><strong>Risk per trade:</strong> ₹<span id="riskPerTrade">0</span></div>
-      <div>
-        <strong>Total planned risk:</strong>
-        ₹<span id="totalRisk">0</span>
-        <span style="color:#9ca3af;">/ ₹<span id="dailyRisk2">0</span></span>
-      </div>
-    </div>
+    <div id="controlsError" class="error"></div>
   </div>
 
-  <div class="card">
-    <h2>Portfolio</h2>
+  <!-- LIVE /api/state VIEW -->
+  <div class="section">
+    <h2>Portfolio from /api/state</h2>
+    <div id="stateSummary" class="summary"></div>
     <table>
       <thead>
         <tr>
@@ -180,153 +138,200 @@
           <th>Stop</th>
           <th>T1</th>
           <th>T2</th>
-          <th>Risk₹</th>
+          <th>Risk ₹</th>
+          <th>Parity</th>
         </tr>
       </thead>
-      <tbody id="portfolioBody"></tbody>
+      <tbody id="statePortfolioBody"></tbody>
     </table>
+    <h3 style="margin-top: 10px;">Raw /api/state JSON</h3>
+    <pre id="stateJson"></pre>
   </div>
 
-  <div class="card">
-    <h2>Raw /api/state JSON</h2>
-    <pre id="rawJson">{}</pre>
+  <!-- LOCKED portfolio_plan VIEW -->
+  <div class="section">
+    <h2>Locked portfolio_plan (live_state.json)</h2>
+    <div style="margin-bottom: 8px;">
+      <button id="btnLoadLocked">Load from /api/state_raw</button>
+    </div>
+    <div id="lockedSummary" class="summary"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Pick</th>
+          <th>Conf%</th>
+          <th>Qty</th>
+          <th>Entry</th>
+          <th>Stop</th>
+          <th>T1</th>
+          <th>T2</th>
+          <th>Risk ₹</th>
+          <th>Parity</th>
+        </tr>
+      </thead>
+      <tbody id="lockedPortfolioBody"></tbody>
+    </table>
+    <h3 style="margin-top: 10px;">Raw portfolio_plan JSON</h3>
+    <pre id="lockedJson"></pre>
+    <div id="lockedError" class="error"></div>
   </div>
 
   <script>
     async function loadConfig() {
       try {
-        const res = await fetch("/api/config");
-        const cfg = await res.json();
-        document.getElementById("mode").textContent = cfg.mode || "paper";
-        document.getElementById("dailyRisk").textContent = cfg.risk_budget_rs ?? "—";
-        document.getElementById("dailyRisk2").textContent = cfg.risk_budget_rs ?? "—";
-        document.getElementById("symbols").textContent = (cfg.symbols || []).join(", ");
-    
-        const riskInput = document.getElementById("riskInput");
-        if (cfg.risk_budget_rs != null && !riskInput.value) {
-          riskInput.value = cfg.risk_budget_rs;
+        const resp = await fetch("/api/config");
+        const data = await resp.json();
+        document.getElementById("configBlock").textContent =
+          JSON.stringify(data, null, 2);
+
+        // prefill risk & day if available
+        if (data.risk_budget_rs) {
+          document.getElementById("riskInput").value = data.risk_budget_rs;
+        }
+        const dayInput = document.getElementById("dayInput");
+        if (!dayInput.value) {
+          const today = new Date().toISOString().slice(0, 10);
+          dayInput.value = today;
         }
       } catch (err) {
-        document.getElementById("status").textContent = "Failed to load /api/config";
+        document.getElementById("configBlock").textContent =
+          "Failed to load /api/config: " + err;
       }
     }
 
-
-    function formatNumber(x) {
-      if (x == null || isNaN(x)) return "-";
-      return Number(x).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-    }
-
-    function renderPortfolio(plans) {
-      const tbody = document.getElementById("portfolioBody");
+    function renderPortfolioTable(plans, tbodyId) {
+      const tbody = document.getElementById(tbodyId);
       tbody.innerHTML = "";
 
       for (const p of plans) {
         const tr = document.createElement("tr");
 
-        const symTd = document.createElement("td");
-        symTd.textContent = p.symbol;
-        tr.appendChild(symTd);
+        const tdSym = document.createElement("td");
+        tdSym.textContent = p.symbol || "";
+        tdSym.className = "symbol";
+        tr.appendChild(tdSym);
 
-        const pickTd = document.createElement("td");
-        const pill = document.createElement("span");
-        const pick = (p.pick || "ABSTAIN").toUpperCase();
-        pill.textContent = pick;
-        pill.classList.add("pill");
-        if (pick === "BULL") pill.classList.add("pill-bull");
-        else if (pick === "BEAR") pill.classList.add("pill-bear");
-        else pill.classList.add("pill-abstain");
-        pickTd.appendChild(pill);
-        tr.appendChild(pickTd);
+        const tdPick = document.createElement("td");
+        const pick = p.pick || "ABSTAIN";
+        tdPick.textContent = pick;
+        if (pick === "BULL") tdPick.className = "pick-bull";
+        else if (pick === "BEAR") tdPick.className = "pick-bear";
+        else tdPick.className = "pick-abstain";
+        tr.appendChild(tdPick);
 
-        const confTd = document.createElement("td");
-        confTd.textContent = p["confidence%"] ?? 0;
-        tr.appendChild(confTd);
+        const tdConf = document.createElement("td");
+        tdConf.textContent = p["confidence%"] != null ? p["confidence%"] : "";
+        tr.appendChild(tdConf);
 
-        const qtyTd = document.createElement("td");
-        qtyTd.textContent = p.qty ?? 0;
-        tr.appendChild(qtyTd);
+        const tdQty = document.createElement("td");
+        tdQty.textContent = p.qty != null ? p.qty : "";
+        tr.appendChild(tdQty);
 
-        const entryTd = document.createElement("td");
-        entryTd.textContent = p.entry != null ? formatNumber(p.entry) : "-";
-        tr.appendChild(entryTd);
+        const tdEntry = document.createElement("td");
+        tdEntry.textContent = p.entry != null ? p.entry.toFixed?.(2) ?? p.entry : "";
+        tr.appendChild(tdEntry);
 
-        const stopTd = document.createElement("td");
-        stopTd.textContent = p.stop != null ? formatNumber(p.stop) : "-";
-        tr.appendChild(stopTd);
+        const tdStop = document.createElement("td");
+        tdStop.textContent = p.stop != null ? p.stop.toFixed?.(2) ?? p.stop : "";
+        tr.appendChild(tdStop);
 
-        const t1Td = document.createElement("td");
-        t1Td.textContent = p.target1 != null ? formatNumber(p.target1) : "-";
-        tr.appendChild(t1Td);
+        const tdT1 = document.createElement("td");
+        tdT1.textContent = p.target1 != null ? p.target1.toFixed?.(2) ?? p.target1 : "";
+        tr.appendChild(tdT1);
 
-        const t2Td = document.createElement("td");
-        t2Td.textContent = p.target2 != null ? formatNumber(p.target2) : "-";
-        tr.appendChild(t2Td);
+        const tdT2 = document.createElement("td");
+        tdT2.textContent = p.target2 != null ? p.target2.toFixed?.(2) ?? p.target2 : "";
+        tr.appendChild(tdT2);
 
-        const riskTd = document.createElement("td");
-        riskTd.textContent = formatNumber(p.per_trade_risk_rs_used ?? 0);
-        tr.appendChild(riskTd);
+        const tdRisk = document.createElement("td");
+        const r = p.per_trade_risk_rs_used != null ? p.per_trade_risk_rs_used : 0;
+        tdRisk.textContent = r ? r.toFixed?.(2) ?? r : "0";
+        tr.appendChild(tdRisk);
+
+        const tdParity = document.createElement("td");
+        tdParity.textContent = p.parity_mode ? "ON" : "-";
+        tr.appendChild(tdParity);
 
         tbody.appendChild(tr);
       }
     }
 
-    async function loadState(day) {
-      const status = document.getElementById("status");
-      status.textContent = "Loading…";
-    
+    async function loadState() {
+      const day = document.getElementById("dayInput").value.trim();
+      const riskStr = document.getElementById("riskInput").value.trim();
+      const errDiv = document.getElementById("controlsError");
+      errDiv.textContent = "";
+
+      if (!day) {
+        errDiv.textContent = "Please enter a day (YYYY-MM-DD).";
+        return;
+      }
+
+      let url = `/api/state?day=${encodeURIComponent(day)}`;
+      if (riskStr) {
+        const riskVal = parseInt(riskStr, 10);
+        if (!Number.isFinite(riskVal) || riskVal < 0) {
+          errDiv.textContent = "Invalid risk value.";
+          return;
+        }
+        url += `&risk=${riskVal}`;
+      }
+
       try {
-        const riskInput = document.getElementById("riskInput");
-        const risk = (riskInput.value || "").trim();
-        const url =
-          "/api/state?day=" +
-          encodeURIComponent(day) +
-          (risk ? "&risk=" + encodeURIComponent(risk) : "");
-    
-        const res = await fetch(url);
-        const state = await res.json();
-    
-        if (state.daily_risk_rs != null) {
-          document.getElementById("riskInput").value = state.daily_risk_rs;
-        }
-    
-        document.getElementById("rawJson").textContent = JSON.stringify(state, null, 2);
-        document.getElementById("stateDate").textContent = state.date || "—";
-        document.getElementById("activeTrades").textContent = state.active_trades ?? 0;
-        document.getElementById("riskPerTrade").textContent = formatNumber(state.risk_per_trade_rs ?? 0);
+        const resp = await fetch(url);
+        const data = await resp.json();
 
-        const totalRisk = (state.active_trades ?? 0) * (state.risk_per_trade_rs ?? 0);
-        document.getElementById("totalRisk").textContent = formatNumber(totalRisk);
+        document.getElementById("stateJson").textContent =
+          JSON.stringify(data, null, 2);
 
-        // keep dailyRisk2 in sync even if backend returns something different from /api/config
-        if (state.daily_risk_rs != null) {
-          document.getElementById("dailyRisk2").textContent = formatNumber(state.daily_risk_rs);
-        }
+        const summary = `Date: ${data.date} | Mode: ${data.mode} | Daily risk: ₹${data.daily_risk_rs} | Active trades: ${data.active_trades} | Risk/trade: ₹${data.risk_per_trade_rs} | Planned: ₹${(data.total_planned_risk_rs || 0).toFixed(2)}`;
+        document.getElementById("stateSummary").textContent = summary;
 
-        renderPortfolio(state.plans || []);
-
-        status.textContent = "Loaded /api/state for " + (state.date || day);
+        renderPortfolioTable(data.plans || [], "statePortfolioBody");
       } catch (err) {
-        console.error(err);
-        status.textContent = "Error loading /api/state";
+        errDiv.textContent = "Failed to load /api/state: " + err;
       }
     }
 
-    document.getElementById("loadBtn").addEventListener("click", () => {
-      const dayInput = document.getElementById("dayInput");
-      const day = dayInput.value;
-      if (!day) {
-        alert("Please select a date.");
-        return;
-      }
-      loadState(day);
-    });
+    async function loadLocked() {
+      const errDiv = document.getElementById("lockedError");
+      errDiv.textContent = "";
+      document.getElementById("lockedJson").textContent = "";
 
-    // On first load, set the date input to some known trading day so you see data immediately.
+      try {
+        const resp = await fetch("/api/state_raw");
+        const data = await resp.json();
+
+        if (!data.portfolio_plan) {
+          errDiv.textContent =
+            "No portfolio_plan found in live_state.json. Run apps.runtime.daily_timeline first.";
+          document.getElementById("lockedPortfolioBody").innerHTML = "";
+          document.getElementById("lockedSummary").textContent = "";
+          return;
+        }
+
+        const plan = data.portfolio_plan;
+        document.getElementById("lockedJson").textContent =
+          JSON.stringify(plan, null, 2);
+
+        const summary = `Date: ${plan.date} | Mode: ${plan.mode} | Daily risk: ₹${plan.daily_risk_rs} | Active trades: ${plan.active_trades} | Risk/trade: ₹${plan.risk_per_trade_rs} | Planned: ₹${(plan.total_planned_risk_rs || 0).toFixed(2)}`;
+        document.getElementById("lockedSummary").textContent = summary;
+
+        renderPortfolioTable(plan.plans || [], "lockedPortfolioBody");
+      } catch (err) {
+        errDiv.textContent = "Failed to load /api/state_raw: " + err;
+      }
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
-      // You can change this default date to today when we go live.
-      document.getElementById("dayInput").value = "2025-08-05";
       loadConfig();
+      document
+        .getElementById("btnLoadState")
+        .addEventListener("click", loadState);
+      document
+        .getElementById("btnLoadLocked")
+        .addEventListener("click", loadLocked);
     });
   </script>
 </body>
