@@ -313,7 +313,11 @@ def api_plan_arm_day(
     day: Optional[str] = Query(
         None,
         description="YYYY-MM-DD; if omitted, uses today's date (system local)",
-    )
+    ),
+    risk: Optional[int] = Query(
+        None,
+        description="Override daily risk budget in rupees for this ARM operation",
+    ),
 ):
     """
     Build the full 10-symbol parity plan for a specific trading day and
@@ -321,15 +325,26 @@ def api_plan_arm_day(
 
     - Uses the same logic as GET /api/state.
     - If 'day' is omitted, uses today's date.
+    - If 'risk' is provided, it overrides the default daily risk.
     """
     if day is None:
         day = _today_str()
 
+    # Build raw plans (tags + pick + entry/stop/targets) for each symbol
     raw_plans = _build_raw_plans_for_day(day)
-    daily_risk_rs = _effective_daily_risk_rs()
+
+    # Decide daily risk: override if query param provided, else use settings
+    if risk is not None:
+        daily_risk_rs = int(risk)
+    else:
+        daily_risk_rs = _effective_daily_risk_rs()
+
+    # Apply portfolio parity split
     portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
 
-    # Force portfolio date to the requested day (even if some symbols had older/latest data)
+    # Force portfolio date to match requested day
     portfolio_state["date"] = day
 
+    # Persist into live_state.json under 'portfolio_plan'
     return _write_portfolio_plan_to_state(portfolio_state)
+
