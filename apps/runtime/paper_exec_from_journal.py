@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import Dict, Any, List
+import os
+from datetime import datetime
 
 import pandas as pd
 
@@ -15,130 +15,87 @@ from probedge.backtest.exec_adapter import simulate_trade_colab_style
 log = get_logger(__name__)
 
 
-def _load_intraday(sym: str) -> pd.DataFrame:
-    """
-    Load intraday TM5 CSV for a symbol using SETTINGS.paths.intraday
-    fallback to data/intraday/{sym}_5minute.csv
-    """
-    tmpl = SETTINGS.paths.intraday or "data/intraday/{sym}_5minute.csv"
-    path = Path(tmpl.format(sym=sym))
-    if not path.exists():
-        raise FileNotFoundError(f"Intraday file not found for {sym}: {path}")
-    return pd.read_csv(path)
-
-
 def run_paper_exec_for_day(day_str: str) -> None:
     """
-    For a given day:
-      - read journal.csv
-      - simulate fills using Colab-style logic
-      - append rows to data/journal/fills.csv
+    Replay all planned trades from journal.csv for a given day using the
+    SAME Colab-style R1/R2 resolver, and write results to data/journal/fills.csv.
     """
-    journal_path = Path(SETTINGS.paths.journal or "data/journal/journal.csv")
-    if not journal_path.exists():
-        raise RuntimeError(f"Journal not found at {journal_path}")
-
     log.info("Paper exec from journal for day=%s", day_str)
-    j = pd.read_csv(journal_path)
 
-    if "day" not in j.columns:
+    journal_path = SETTINGS.paths.journal or "data/journal/journal.csv"
+    fills_path = "data/journal/fills.csv"
+
+    if not os.path.exists(journal_path):
+        raise FileNotFoundError(f"Journal not found at {journal_path}")
+
+    journal = pd.read_csv(journal_path)
+
+    if "day" not in journal.columns:
         raise RuntimeError("journal.csv missing 'day' column")
 
-    j_day = j[j["day"].astype(str) == str(day_str)].copy()
-    if j_day.empty:
-        log.info("No journal rows for day=%s", day_str)
+    # Filter trades for the requested day
+    mask = journal["day"].astype(str) == day_str
+    day_trades = journal.loc[mask].copy()
+
+    # Only simulate real trades (qty > 0)
+    if "qty" in day_trades.columns:
+        day_trades = day_trades[day_trades["qty"] > 0]
+
+    if day_trades.empty:
+        log.warning("No trades for day=%s in journal", day_str)
         return
 
-    fills: List[Dict[str, Any]] = []
+    fills_rows = []
 
-    # cache intraday per symbol
-    intraday_cache: Dict[str, pd.DataFrame] = {}
+    for _, trade in day_trades.iterrows():
+        # Colab-style sim: returns (pnl_r1, pnl_r2, r1, r2, touches)
+        pnl_r1, pnl_r2, r1, r2, touches = simulate_trade_colab_style(trade)
 
-    for _, row in j_day.iterrows():
-        sym = str(row["symbol"]).upper()
-        side = str(row["side"]).upper()
-        qty = int(row["qty"])
-
-        # safety: skip nonsense
-        if qty <= 0:
-            continue
-
-        if sym not in intraday_cache:
-            intraday_cache[sym] = _load_intraday(sym)
-
-        intraday = intraday_cache[sym]
-
-        trade = {
-            "day": day_str,
-            "symbol": sym,
-            "side": side,
-            "qty": qty,
-            "entry": float(row["entry"]),
-            "stop": float(row["stop"]),
-            "target1": float(row["target1"]),
-            "target2": float(row["target2"]),
-            "planned_risk_rs": float(row.get("planned_risk_rs", 0.0) or 0.0),
-        }
-
-        (
-            pnl_rs,
-            pnl_r,
-            exit_reason,
-            entry_ts,
-            exit_ts,
-            exit_price,
-        ) = simulate_trade_colab_style(trade, intraday)
-
-        fills.append(
+        fills_rows.append(
             {
-                "day": day_str,
-                "mode": row.get("mode", "paper"),
-                "symbol": sym,
-                "side": side,
-                "qty": qty,
-                "entry": float(row["entry"]),
-                "stop": float(row["stop"]),
-                "target1": float(row["target1"]),
-                "target2": float(row["target2"]),
-                "entry_time": entry_ts,
-                "exit_time": exit_ts,
-                "exit_price": exit_price,
-                "pnl_rs": pnl_rs,
-                "pnl_r": pnl_r,
-                "exit_reason": exit_reason,
-                "daily_risk_rs": float(row.get("daily_risk_rs", 0.0) or 0.0),
-                "planned_risk_rs": float(row.get("planned_risk_rs", 0.0) or 0.0),
-                "confidence_pct": row.get("confidence_pct", None),
-                "tag_OT": row.get("tag_OT", None),
-                "tag_OL": row.get("tag_OL", None),
-                "tag_PDC": row.get("tag_PDC", None),
-                "parity_mode": row.get("parity_mode", None),
-                "strategy": row.get("strategy", None),
-                "journal_created_at": row.get("created_at", None),
+                "day": trade["day"],
+                "mode": trade.get("mode", ""),
+                "symbol": trade["symbol"],
+                "side": trade["side"],
+                "qty": trade["qty"],
+                "entry": trade["entry"],
+                "stop": trade["stop"],
+                "target1": trade["target1"],
+                "target2": trade["target2"],
+                "pnl_r1": pnl_r1,
+                "pnl_r2": pnl_r2,
+                "r1_result": r1,
+                "r2_result": r2,
+                "hit_stop_time": touches["stop"].isoformat() if touches["stop"] is not None else "",
+                "hit_t1_time": touches["t1"].isoformat() if touches["t1"] is not None else "",
+                "hit_t2_time": touches["t2"].isoformat() if touches["t2"] is not None else "",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
             }
         )
 
-    if not fills:
-        log.info("No valid fills generated for day=%s", day_str)
-        return
+    new_fills = pd.DataFrame(fills_rows)
 
-    fills_df = pd.DataFrame(fills)
-    fills_path = Path("data/journal/fills.csv")
+    # Append to existing fills.csv (if any)
+    if os.path.exists(fills_path):
+        existing = pd.read_csv(fills_path)
+        fills = pd.concat([existing, new_fills], ignore_index=True)
+    else:
+        os.makedirs(os.path.dirname(fills_path), exist_ok=True)
+        fills = new_fills
 
-    mode = "a" if fills_path.exists() else "w"
-    header = not fills_path.exists()
-    fills_df.to_csv(fills_path, index=False, mode=mode, header=header)
-
+    fills.to_csv(fills_path, index=False)
     log.info(
-        "Wrote %d fills to %s for day=%s",
-        len(fills_df),
+        "Appended %d fill rows to %s for day=%s",
+        len(new_fills),
         fills_path,
         day_str,
     )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Probedge paper exec from journal")
+    parser = argparse.ArgumentParser(
+        description="Replay journal trades in paper mode using Colab-style simulator."
+    )
     parser.add_argument(
         "--day",
         type=str,
@@ -146,6 +103,7 @@ def main():
         help="Trading day YYYY-MM-DD",
     )
     args = parser.parse_args()
+
     run_paper_exec_for_day(args.day)
 
 
