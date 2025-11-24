@@ -26,80 +26,83 @@ def _dt_to_iso(val: object) -> str:
 log = get_logger(__name__)
 
 
-def run_paper_exec_for_day(day_str: str) -> None:
-    """
-    Replay all planned trades from journal.csv for a given day using the
-    SAME Colab-style R1/R2 resolver, and write results to data/journal/fills.csv.
-    """
-    log.info("Paper exec from journal for day=%s", day_str)
+def run_paper_exec_for_day(day_str: str):
+    day = pd.to_datetime(day_str).normalize()
 
-    journal_path = SETTINGS.paths.journal or "data/journal/journal.csv"
-    fills_path = "data/journal/fills.csv"
-
-    if not os.path.exists(journal_path):
-        raise FileNotFoundError(f"Journal not found at {journal_path}")
+    journal_path = "data/journal/journal.csv"
+    fills_path   = "data/journal/fills.csv"
 
     journal = pd.read_csv(journal_path)
+    journal["day"] = pd.to_datetime(journal["day"]).dt.normalize()
 
-    if "day" not in journal.columns:
-        raise RuntimeError("journal.csv missing 'day' column")
-
-    # Filter trades for the requested day
-    mask = journal["day"].astype(str) == day_str
-    day_trades = journal.loc[mask].copy()
-
-    # Only simulate real trades (qty > 0)
-    if "qty" in day_trades.columns:
-        day_trades = day_trades[day_trades["qty"] > 0]
+    # Filter for this day and paper mode
+    day_trades = journal[(journal["day"] == day) & (journal["mode"] == "paper")].copy()
 
     if day_trades.empty:
-        log.warning("No trades for day=%s in journal", day_str)
+        log.info("No trades in journal for day=%s", day_str)
         return
+
+    # *** NEW: drop exact duplicates so re-arming doesn't multiply fills ***
+    day_trades = day_trades.drop_duplicates(
+        subset=[
+            "day", "mode", "symbol", "side",
+            "qty", "entry", "stop", "target1", "target2"
+        ]
+    ).reset_index(drop=True)
 
     fills_rows = []
 
     for _, trade in day_trades.iterrows():
-        # Colab-style sim: returns (pnl_r1, pnl_r2, r1, r2, touches)
-        pnl_r1, pnl_r2, r1, r2, touches = simulate_trade_colab_style(trade)
+        (
+            pnl_r1,
+            pnl_r2,
+            r1_result,
+            r2_result,
+            touches,
+        ) = simulate_trade_colab_style(trade)
 
         fills_rows.append(
             {
-                "day": trade["day"],
-                "mode": trade.get("mode", ""),
+                "day": trade["day"].date().isoformat(),
+                "mode": trade["mode"],
                 "symbol": trade["symbol"],
                 "side": trade["side"],
-                "qty": trade["qty"],
-                "entry": trade["entry"],
-                "stop": trade["stop"],
-                "target1": trade["target1"],
-                "target2": trade["target2"],
+                "qty": int(trade["qty"]),
+                "entry": float(trade["entry"]),
+                "stop": float(trade["stop"]),
+                "target1": float(trade["target1"]),
+                "target2": float(trade["target2"]),
                 "pnl_r1": pnl_r1,
                 "pnl_r2": pnl_r2,
-                "r1_result": r1,
-                "r2_result": r2,
-                "hit_stop_time": _dt_to_iso(touches["stop"]),
-                "hit_t1_time": _dt_to_iso(touches["t1"]),
-                "hit_t2_time": _dt_to_iso(touches["t2"]),
-                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "r1_result": r1_result,
+                "r2_result": r2_result,
+                "hit_stop_time": (
+                    pd.to_datetime(touches["stop"]).isoformat()
+                    if touches["stop"] is not None
+                    else ""
+                ),
+                "hit_t1_time": (
+                    pd.to_datetime(touches["t1"]).isoformat()
+                    if touches["t1"] is not None
+                    else ""
+                ),
+                "hit_t2_time": (
+                    pd.to_datetime(touches["t2"]).isoformat()
+                    if touches["t2"] is not None
+                    else ""
+                ),
+                "created_at": pd.Timestamp.now().isoformat(timespec="seconds"),
             }
         )
 
-    new_fills = pd.DataFrame(fills_rows)
+    # Append to fills.csv (create if needed)
+    fills_df = pd.DataFrame(fills_rows)
+    header = not os.path.exists(fills_path)
+    fills_df.to_csv(fills_path, mode="a", header=header, index=False)
 
-    # Append to existing fills.csv (if any)
-    if os.path.exists(fills_path):
-        existing = pd.read_csv(fills_path)
-        fills = pd.concat([existing, new_fills], ignore_index=True)
-    else:
-        os.makedirs(os.path.dirname(fills_path), exist_ok=True)
-        fills = new_fills
-
-    fills.to_csv(fills_path, index=False)
     log.info(
         "Appended %d fill rows to %s for day=%s",
-        len(new_fills),
-        fills_path,
-        day_str,
+        len(fills_df), fills_path, day_str
     )
 
 
