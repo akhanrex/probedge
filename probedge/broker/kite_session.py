@@ -8,11 +8,18 @@ from pathlib import Path
 import datetime as dt
 from typing import Optional, Dict, Any
 
+# Try to load .env so KITE_* are available in os.environ
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # looks for .env in current/parent dirs
+except Exception:
+    pass
+
 from kiteconnect import KiteConnect
 
-# Try to import SETTINGS, but don't depend on it
+# SETTINGS is optional; we just use it if available
 try:
-    from probedge.infra.settings import SETTINGS
+    from probedge.infra.settings import SETTINGS  # type: ignore
 except Exception:
     SETTINGS = None  # type: ignore
 
@@ -21,21 +28,24 @@ from probedge.infra.logger import get_logger
 log = get_logger(__name__)
 
 
-def _from_settings_or_env(env_key: str, attr_name: str, default: str = "") -> str:
+def _get_val(env_name: str, settings_attr: str | None = None, default: str = "") -> str:
     """
-    Helper: prefer SETTINGS.attr_name if present, else environment variable.
-    This lets us work even if infra.settings is not updated.
+    Priority:
+      1) SETTINGS.<settings_attr> if present and non-empty
+      2) Environment variable ENV_NAME (from os.environ / .env)
+      3) default
     """
-    if SETTINGS is not None and hasattr(SETTINGS, attr_name):
-        val = getattr(SETTINGS, attr_name)
+    if SETTINGS is not None and settings_attr and hasattr(SETTINGS, settings_attr):
+        val = getattr(SETTINGS, settings_attr)
         if isinstance(val, str) and val:
             return val
-    return os.getenv(env_key, default)
+
+    return os.getenv(env_name, default)
 
 
-API_KEY: str = _from_settings_or_env("KITE_API_KEY", "kite_api_key", "")
-API_SECRET: str = _from_settings_or_env("KITE_API_SECRET", "kite_api_secret", "")
-SESSION_FILE: str = _from_settings_or_env(
+API_KEY: str = _get_val("KITE_API_KEY", "kite_api_key", "")
+API_SECRET: str = _get_val("KITE_API_SECRET", "kite_api_secret", "")
+SESSION_FILE: str = _get_val(
     "KITE_SESSION_FILE",
     "kite_session_file",
     "data/state/kite_session.json",
@@ -54,6 +64,11 @@ def _ensure_dir(path: Path) -> None:
 
 def _new_kite() -> KiteConnect:
     if not API_KEY:
+        # We log a warning first to avoid silent confusion
+        log.error(
+            "[kite_session] KITE_API_KEY not found. "
+            "Check your .env or infra.settings.SETTINGS."
+        )
         raise RuntimeError("KITE_API_KEY is not set (check your .env)")
     return KiteConnect(api_key=API_KEY)
 
@@ -61,7 +76,6 @@ def _new_kite() -> KiteConnect:
 def get_login_url() -> str:
     """
     Return the Kite login URL.
-    In UI/CLI you open this in browser.
     """
     kite = _new_kite()
     url = kite.login_url()
@@ -87,15 +101,14 @@ def load_session() -> Optional[Dict[str, Any]]:
 
 def handle_callback(request_token: str) -> Dict[str, Any]:
     """
-    Core logic: exchange request_token -> access_token and save it.
-    Can be called from an HTTP callback OR from a CLI script.
+    Exchange request_token -> access_token and save it.
     """
     if not API_SECRET:
+        log.error("[kite_session] KITE_API_SECRET not found. Check your .env.")
         raise RuntimeError("KITE_API_SECRET is not set (check your .env)")
 
     kite = _new_kite()
     data = kite.generate_session(request_token, API_SECRET)
-    # data contains: access_token, public_token, user_id, etc.
 
     session = {
         "api_key": API_KEY,
@@ -110,7 +123,7 @@ def handle_callback(request_token: str) -> Dict[str, Any]:
 
 def get_authorized_kite() -> KiteConnect:
     """
-    For live engine: returns KiteConnect with access_token set.
+    Returns KiteConnect with access_token set.
     Raises NotAuthenticated if no session on disk.
     """
     sess = load_session()
@@ -124,7 +137,7 @@ def get_authorized_kite() -> KiteConnect:
 
 def kite_status() -> Dict[str, Any]:
     """
-    Small status dict: used by UI or CLI to know if we are logged in.
+    Small status dict so UI/CLI can know if we are logged in.
     """
     sess = load_session()
     if not sess:
