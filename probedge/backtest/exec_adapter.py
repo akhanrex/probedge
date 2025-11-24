@@ -167,22 +167,6 @@ def _load_tm5_for_symbol(symbol: str) -> pd.DataFrame:
     log.info("[exec_adapter] loading intraday tm5 for %s from %s", symbol, path)
     return _read_tm5(path)
 
-
-    # Ensure the columns we need for Colab-style backtest exist
-    if "DateTime" not in df.columns:
-        raise RuntimeError(
-            f"read_tm5_csv returned no DateTime column for {symbol} ({path})"
-        )
-
-    if "Date" not in df.columns:
-        df["Date"] = df["DateTime"].dt.normalize()
-
-    if "_mins" not in df.columns:
-        df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
-
-    return df
-
-
 def simulate_trade_colab_style(trade_row, intraday_raw=None):
     """
     Simulate a single trade using the SAME R1/R2 resolution logic
