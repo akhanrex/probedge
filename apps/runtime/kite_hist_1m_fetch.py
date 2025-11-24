@@ -31,26 +31,22 @@ def load_symbol_tokens() -> Dict[str, int]:
     return out
 
 def build_token_map(kite: KiteConnect, symbols: List[str]) -> Dict[str, int]:
-    """
-    Build a fresh symbol -> instrument_token map from live NSE instruments.
-    TMPV is an alias for TATAMOTORS on NSE.
-    """
     instruments = kite.instruments("NSE")
-    by_symbol = {
-        row["tradingsymbol"].upper(): row["instrument_token"]
-        for row in instruments
+    by_symbol = {row["tradingsymbol"].upper(): row["instrument_token"] for row in instruments}
+
+    # old names → current NSE symbols
+    ALIASES = {
+        "TATAMOTORS": "TMPV",   # if anything, map legacy TATAMOTORS to TMPV
     }
 
-    token_map: Dict[str, int] = {}
+    out: Dict[str, int] = {}
     for sym in symbols:
-        s = sym.upper()
-        # TMPV is our internal alias; TATAMOTORS is the real NSE symbol
-        lookup = "TATAMOTORS" if s == "TMPV" else s
+        base = sym.upper()
+        lookup = ALIASES.get(base, base)   # TMPV stays TMPV now
         if lookup not in by_symbol:
             raise RuntimeError(f"No NSE instrument found for {sym} (lookup={lookup})")
-        token_map[s] = by_symbol[lookup]
-
-    return token_map
+        out[base] = by_symbol[lookup]
+    return out
 
 
 def daterange(start: date, end: date) -> List[date]:
