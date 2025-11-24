@@ -86,15 +86,36 @@ def process_day_for_symbol(day_str: str, sym: str):
         existing = pd.read_csv(tm5_path)
         # drop any existing rows for this Date
         day_norm = pd.to_datetime(day_str).normalize()
-        if "DateTime" in existing.columns:
-            existing["DateTime"] = pd.to_datetime(existing["DateTime"], errors="coerce")
-        if "Date" in existing.columns:
-            existing["Date"] = pd.to_datetime(existing["Date"], errors="coerce")
-        existing = existing[existing["Date"] != day_norm]
-        combined = pd.concat([existing, ohlc], ignore_index=True)
-        combined = combined.sort_values("DateTime").reset_index(drop=True)
+    
+        if os.path.exists(tm5_path):
+            existing = pd.read_csv(tm5_path)
+    
+            if "Date" in existing.columns:
+                # Newer shape: use Date column
+                existing["Date"] = pd.to_datetime(existing["Date"]).dt.normalize()
+                existing = existing[existing["Date"] != day_norm]
+    
+            elif "DateTime" in existing.columns:
+                # Older shape: fall back to DateTime
+                existing["DateTime"] = pd.to_datetime(existing["DateTime"])
+                existing = existing[existing["DateTime"].dt.normalize() != day_norm]
+    
+            else:
+                # Completely unknown shape – safest is to drop old rows for this symbol
+                log.warning(
+                    "[minute_to_tm5] %s has no Date/DateTime column; "
+                    "dropping old data and starting fresh", tm5_path
+                )
+                existing = pd.DataFrame(columns=df_5.columns)
+    
+            combined = pd.concat([existing, df_5], ignore_index=True)
+    
+        else:
+            combined = df_5
+    
         combined.to_csv(tm5_path, index=False)
         log.info("[minute_to_tm5] updated %s with day %s", tm5_path, day_str)
+
     else:
         ohlc.to_csv(tm5_path, index=False)
         log.info("[minute_to_tm5] created %s with day %s", tm5_path, day_str)
