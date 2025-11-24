@@ -12,6 +12,17 @@ from probedge.infra.logger import get_logger
 from probedge.infra.settings import SETTINGS
 from probedge.backtest.exec_adapter import simulate_trade_colab_style
 
+def _dt_to_iso(val: object) -> str:
+    """Convert numpy.datetime64 / Timestamp / None to ISO string safely."""
+    if val is None:
+        return ""
+    try:
+        return pd.to_datetime(val).isoformat()
+    except Exception:
+        # Fallback: plain string
+        return str(val)
+
+
 log = get_logger(__name__)
 
 
@@ -66,9 +77,9 @@ def run_paper_exec_for_day(day_str: str) -> None:
                 "pnl_r2": pnl_r2,
                 "r1_result": r1,
                 "r2_result": r2,
-                "hit_stop_time": touches["stop"].isoformat() if touches["stop"] is not None else "",
-                "hit_t1_time": touches["t1"].isoformat() if touches["t1"] is not None else "",
-                "hit_t2_time": touches["t2"].isoformat() if touches["t2"] is not None else "",
+                "hit_stop_time": _dt_to_iso(touches["stop"]),
+                "hit_t1_time": _dt_to_iso(touches["t1"]),
+                "hit_t2_time": _dt_to_iso(touches["t2"]),
                 "created_at": datetime.now().isoformat(timespec="seconds"),
             }
         )
