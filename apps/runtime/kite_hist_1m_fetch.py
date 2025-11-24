@@ -30,6 +30,28 @@ def load_symbol_tokens() -> Dict[str, int]:
         out[str(sym).upper()] = int(tok)
     return out
 
+def build_token_map(kite: KiteConnect, symbols: List[str]) -> Dict[str, int]:
+    """
+    Build a fresh symbol -> instrument_token map from live NSE instruments.
+    TMPV is an alias for TATAMOTORS on NSE.
+    """
+    instruments = kite.instruments("NSE")
+    by_symbol = {
+        row["tradingsymbol"].upper(): row["instrument_token"]
+        for row in instruments
+    }
+
+    token_map: Dict[str, int] = {}
+    for sym in symbols:
+        s = sym.upper()
+        # TMPV is our internal alias; TATAMOTORS is the real NSE symbol
+        lookup = "TATAMOTORS" if s == "TMPV" else s
+        if lookup not in by_symbol:
+            raise RuntimeError(f"No NSE instrument found for {sym} (lookup={lookup})")
+        token_map[s] = by_symbol[lookup]
+
+    return token_map
+
 
 def daterange(start: date, end: date) -> List[date]:
     # inclusive [start, end]
@@ -75,8 +97,13 @@ def main():
     kite = KiteConnect(api_key=sess["api_key"])
     kite.set_access_token(sess["access_token"])
 
-    symbol_to_token = load_symbol_tokens()
-    log.info("[hist_1m] symbols: %s", list(symbol_to_token.keys()))
+    # We only trust the *symbol list* from the config file.
+    config_tokens = load_symbol_tokens()
+    symbols = sorted(config_tokens.keys())  # e.g. ['ABB','COALINDIA',...,'TMPV']
+    symbol_to_token = build_token_map(kite, symbols)
+
+    log.info("[hist_1m] symbols: %s", symbols)
+    log.info("[hist_1m] token map: %s", symbol_to_token)
 
     # ---- EDIT THESE DATES FOR THE RANGE YOU WANT ----
     start_day = date(2025, 8, 1)   # e.g. 1st Aug
@@ -93,7 +120,8 @@ def main():
         day_dir = OUT_ROOT / d.strftime("%Y-%m-%d")
         day_dir.mkdir(parents=True, exist_ok=True)
 
-        for sym, tok in symbol_to_token.items():
+        for sym in symbols:
+            tok = symbol_to_token[sym]
             out_path = day_dir / f"{sym}_1minute.csv"
             if out_path.exists():
                 log.info("[hist_1m] already have %s for %s; skipping", sym, d)
@@ -105,6 +133,7 @@ def main():
 
             df.to_csv(out_path, index=False)
             log.info("[hist_1m] saved %s rows to %s", len(df), out_path)
+
 
 
 if __name__ == "__main__":
