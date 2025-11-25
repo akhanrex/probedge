@@ -22,105 +22,77 @@ def tm5_path_for_symbol(sym: str) -> Path:
     pattern = SETTINGS.paths.intraday or "data/intraday/{sym}_5minute.csv"
     return Path(pattern.format(sym=sym))
 
+def process_day_for_symbol(day_str: str, sym: str) -> None:
+    """
+    Build / update {sym}_5minute.csv for a single day.
+    If the 1-minute file for that day is missing, we just log and return.
+    """
+    day = pd.to_datetime(day_str).date()
 
-def process_day_for_symbol(day_str: str, sym: str):
-    day_dir = HIST_ROOT / day_str
-    in_path = day_dir / f"{sym}_1minute.csv"
-    if not in_path.exists():
-        log.warning("[minute_to_tm5] missing 1m file %s", in_path)
-        return None
-
-    df = pd.read_csv(in_path)
-    if df.empty:
-        return None
-
-    # Ensure datetime
-    if "DateTime" not in df.columns:
-        if "date" in df.columns:
-            df["DateTime"] = pd.to_datetime(df["date"], errors="coerce")
-        else:
-            raise RuntimeError(f"No DateTime/date column in {in_path}")
-
-    df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")
-    df = df.dropna(subset=["DateTime"]).sort_values("DateTime")
-
-    # Restrict to trading session 09:15–15:30
-    t = df["DateTime"].dt.time
-    df = df[(t >= dtime(9, 15)) & (t <= dtime(15, 30))].copy()
-    if df.empty:
-        return None
-
-    df = df.set_index("DateTime")
-
-    # Resample to 5-minute bars
-    ohlc = df.resample("5min").agg(
-        {
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum",
-        }
+    # 1m input and 5m output paths
+    minute_path = os.path.join(
+        "data", "hist_1m", day_str, f"{sym}_1minute.csv"
     )
-    ohlc = ohlc.dropna(subset=["open", "high", "low", "close"])
-
-    # Reset index, rename columns to match TM5 expectations
-    ohlc = ohlc.reset_index().rename(
-        columns={
-            "DateTime": "DateTime",
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume",
-        }
+    tm5_path = os.path.join(
+        "data", "intraday", f"{sym}_5minute.csv"
     )
 
-    # Attach Date and _mins like Colab reader does
-    ohlc["Date"] = ohlc["DateTime"].dt.normalize()
-    ohlc["_mins"] = ohlc["DateTime"].dt.hour * 60 + ohlc["DateTime"].dt.minute
+    # If no 1m file, skip this symbol/day cleanly
+    if not os.path.exists(minute_path):
+        log.warning("[minute_to_tm5] missing 1m file %s", minute_path)
+        return
 
-    tm5_path = tm5_path_for_symbol(sym)
-    tm5_path.parent.mkdir(parents=True, exist_ok=True)
+    # --- build 5m from the 1m file ---
+    df_1 = pd.read_csv(minute_path)
 
-    # Append or create
-    if tm5_path.exists():
-        existing = pd.read_csv(tm5_path)
-        # drop any existing rows for this Date
-        day_norm = pd.to_datetime(day_str).normalize()
-    
-        if os.path.exists(tm5_path):
-            existing = pd.read_csv(tm5_path)
-    
-            if "Date" in existing.columns:
-                # Newer shape: use Date column
-                existing["Date"] = pd.to_datetime(existing["Date"]).dt.normalize()
-                existing = existing[existing["Date"] != day_norm]
-    
-            elif "DateTime" in existing.columns:
-                # Older shape: fall back to DateTime
-                existing["DateTime"] = pd.to_datetime(existing["DateTime"])
-                existing = existing[existing["DateTime"].dt.normalize() != day_norm]
-    
-            else:
-                # Completely unknown shape – safest is to drop old rows for this symbol
-                log.warning(
-                    "[minute_to_tm5] %s has no Date/DateTime column; "
-                    "dropping old data and starting fresh", tm5_path
-                )
-                existing = pd.DataFrame(columns=df_5.columns)
-    
-            combined = pd.concat([existing, df_5], ignore_index=True)
-    
-        else:
-            combined = df_5
-    
-        combined.to_csv(tm5_path, index=False)
-        log.info("[minute_to_tm5] updated %s with day %s", tm5_path, day_str)
-
+    # normalise the datetime column name
+    if "DateTime" in df_1.columns:
+        dt = pd.to_datetime(df_1["DateTime"])
+    elif "date" in df_1.columns:
+        dt = pd.to_datetime(df_1["date"])
+    elif "datetime" in df_1.columns:
+        dt = pd.to_datetime(df_1["datetime"])
     else:
-        ohlc.to_csv(tm5_path, index=False)
-        log.info("[minute_to_tm5] created %s with day %s", tm5_path, day_str)
+        raise RuntimeError(f"Cannot find datetime column in {minute_path}")
+
+    df_1["DateTime"] = dt
+    df_1 = df_1.sort_values("DateTime")
+
+    # 5-minute resample on DateTime
+    df_1 = df_1.set_index("DateTime")
+
+    ohlcv = df_1.resample("5min", label="left", closed="left").agg(
+        {
+            "open": "first" if "open" in df_1.columns else "first",
+            "high": "max"   if "high" in df_1.columns else "max",
+            "low": "min"    if "low" in df_1.columns else "min",
+            "close": "last" if "close" in df_1.columns else "last",
+            "volume": "sum" if "volume" in df_1.columns else "sum",
+        }
+    )
+
+    ohlcv = ohlcv.dropna(how="any")
+
+    df_5 = ohlcv.reset_index()  # DateTime back as a column
+    df_5["Date"] = df_5["DateTime"].dt.normalize()
+
+    # --- merge into existing TM5 (if any), de-duping this day ---
+    if os.path.exists(tm5_path):
+        existing = pd.read_csv(tm5_path)
+
+        if "Date" in existing.columns:
+            existing["Date"] = pd.to_datetime(existing["Date"]).dt.normalize()
+            existing = existing[existing["Date"] != pd.to_datetime(day)]
+        elif "DateTime" in existing.columns:
+            dt_existing = pd.to_datetime(existing["DateTime"])
+            existing = existing[dt_existing.dt.date != day]
+
+        combined = pd.concat([existing, df_5], ignore_index=True)
+    else:
+        combined = df_5
+
+    combined.to_csv(tm5_path, index=False)
+    log.info("[minute_to_tm5] updated %s with day %s", tm5_path, day_str)
 
 
 def main():
