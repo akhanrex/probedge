@@ -177,7 +177,9 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     """
     # --- 1) Extract journal fields (from data/journal/journal.csv) ---
     symbol = str(trade_row["symbol"])
-    day = pd.to_datetime(trade_row["day"]).normalize()
+    day_ts = pd.to_datetime(trade_row["day"])
+    day_date = day_ts.date()
+
 
     side = str(trade_row["side"]).upper()
     long_side = side in ("BUY", "BULL")
@@ -191,10 +193,23 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     # --- 2) Load TM5 for that symbol+day using the canonical reader ---
     tm5 = _load_tm5_for_symbol(symbol)
 
-    # Filter to this trading day
-    day_df = tm5[tm5["Date"] == day].copy()
+    # Ensure we have a Date column to filter on
+    if "Date" not in tm5.columns and "DateTime" in tm5.columns:
+        tm5["Date"] = pd.to_datetime(tm5["DateTime"])
+    elif "Date" in tm5.columns:
+        tm5["Date"] = pd.to_datetime(tm5["Date"])
+    else:
+        raise RuntimeError(
+            f"TM5 for {symbol} missing Date/DateTime columns; columns={tm5.columns.tolist()}"
+        )
+
+    # Filter to this trading day by DATE (ignore timezone)
+    df_dates = tm5["Date"].dt.date
+    day_df = tm5[df_dates == day_date].copy()
+
     if day_df.empty:
-        raise RuntimeError(f"No intraday TM5 data for {symbol} on {day.date()}")
+        raise RuntimeError(f"No intraday TM5 data for {symbol} on {day_date}")
+
 
     # Slice 09:40→15:05 window (matches Colab backtest)
     w09 = _slice_window_fast(day_df, T0_M, T1_M)
