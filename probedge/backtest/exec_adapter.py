@@ -260,11 +260,10 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
         close_col = w09["Close"]
         if isinstance(close_col, pd.DataFrame):
             close_col = close_col.iloc[:, 0]
+        close_col = close_col.squeeze()
         exit_px = float(close_col.iloc[-1])
-
         pnl_r1 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
         r1 = "EOD"
-
 
     # --- 5) R2 PnL (2R target) ---
     if ts_t2 is not None and (ts_stop is None or ts_t2 <= ts_stop):
@@ -274,14 +273,12 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
         pnl_r2 = -qty * risk_per_share
         r2 = "LOSS"
     else:
-    else:
         close_col = w09["Close"]
         if isinstance(close_col, pd.DataFrame):
             close_col = close_col.iloc[:, 0]
+        close_col = close_col.squeeze()
         exit_px = float(close_col.iloc[-1])
-
         pnl_r2 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
         r2 = "EOD"
-
 
     return pnl_r1, pnl_r2, r1, r2, touches
