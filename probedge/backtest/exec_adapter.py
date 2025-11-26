@@ -17,11 +17,11 @@ log = get_logger(__name__)
 
 def _read_tm5(path: str) -> pd.DataFrame:
     """
-    Robust 5-min reader copied from Colab batch backtest.
+    Robust 5-min reader similar to Colab batch backtest.
     Handles BOM, weird column names, and builds DateTime + OHLCV.
 
-    This is designed to work with the files produced by apps.runtime.minute_to_tm5:
-    columns like: Date, Open, High, Low, Close, Volume, DateTime, _mins
+    Designed to work with files produced by apps.runtime.minute_to_tm5, e.g.:
+    Date,Open,High,Low,Close,Volume,DateTime,_mins
     """
     df = pd.read_csv(path)
 
@@ -31,16 +31,14 @@ def _read_tm5(path: str) -> pd.DataFrame:
 
     lc2orig = {c.lower(): c for c in df.columns}
 
-    # --- 1) Pick the time column for DateTime ---
+    # --- 1) Pick a datetime source column ---
     dt = None
-
-    # Prefer "datetime" / "date_time" / "timestamp" over "date"
     for key in ("datetime", "date_time", "timestamp", "date"):
         if key in lc2orig:
             dt = pd.to_datetime(df[lc2orig[key]], errors="coerce")
             break
 
-    # 2) Try separate date + time columns if above failed
+    # 2) Try separate date + time columns
     if dt is None and ("date" in lc2orig and "time" in lc2orig):
         dt = pd.to_datetime(
             df[lc2orig["date"]].astype(str) + " " + df[lc2orig["time"]].astype(str),
@@ -65,7 +63,7 @@ def _read_tm5(path: str) -> pd.DataFrame:
         raise RuntimeError(f"No recognizable datetime columns in intraday file: {path}")
 
     # --- Canonical DateTime column ---
-    # Drop any extra datetime-like columns; keep a single DateTime
+    # Drop extra datetime-like columns; keep a single DateTime
     for col in list(df.columns):
         if col != "DateTime" and col.lower() in ("datetime", "date_time", "timestamp"):
             df.drop(columns=col, inplace=True, errors="ignore")
@@ -101,10 +99,9 @@ def _read_tm5(path: str) -> pd.DataFrame:
         if v and v != k:
             df.rename(columns={v: k}, inplace=True)
 
-    # --- Ensure numeric OHLCV (avoid the 2D / TypeError issue) ---
+    # --- Ensure numeric OHLCV (avoid 2D / TypeError) ---
     num_cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
     if num_cols:
-        # apply column-wise so each input is a 1D Series
         df[num_cols] = df[num_cols].apply(lambda s: pd.to_numeric(s, errors="coerce"))
 
     # --- Drop junk, sort, and add Date / _mins ---
@@ -186,7 +183,13 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     """
     # --- 1) Extract journal fields ---
     symbol = str(trade_row["symbol"])
-    day = pd.to_datetime(trade_row["day"]).normalize()
+
+    # Normalize day from journal (handle possible tz)
+    day = pd.to_datetime(trade_row["day"])
+    if getattr(day, "tzinfo", None) is not None:
+        # If this is tz-aware Timestamp, drop tz
+        day = day.tz_localize(None)
+    day = day.normalize()
     day_date = day.date()
 
     side = str(trade_row["side"]).upper()
@@ -201,8 +204,8 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     # --- 2) Load TM5 for that symbol+day ---
     tm5 = _load_tm5_for_symbol(symbol)
 
-    # Filter to this trading day
-    day_df = tm5[tm5["Date"] == day].copy()
+    # Filter to this trading day using DateTime.date (robust against any Date column quirks)
+    day_df = tm5[tm5["DateTime"].dt.date == day_date].copy()
     if day_df.empty:
         raise RuntimeError(f"No intraday TM5 data for {symbol} on {day_date}")
 
