@@ -22,6 +22,7 @@ def _read_tm5(path: str) -> pd.DataFrame:
     Handles BOM, weird column names, and builds DateTime + OHLCV.
     """
     df = pd.read_csv(path)
+
     # Clean column names (strip BOM, spaces)
     df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
     df = df.loc[:, ~pd.Index(df.columns).duplicated()]
@@ -69,6 +70,10 @@ def _read_tm5(path: str) -> pd.DataFrame:
     else:
         df.insert(0, "DateTime", dt)
 
+    # 🔑 Drop timezone if present – treat as naive IST wall-clock
+    if getattr(df["DateTime"].dtype, "tz", None) is not None:
+        df["DateTime"] = df["DateTime"].dt.tz_localize(None)
+
     # Map OHLCV
     def pick(*aliases):
         for a in aliases:
@@ -91,24 +96,10 @@ def _read_tm5(path: str) -> pd.DataFrame:
         if v and v != k:
             df.rename(columns={v: k}, inplace=True)
 
-    # After renames, drop any duplicate columns by name (keep first occurrence)
-    df = df.loc[:, ~pd.Index(df.columns).duplicated()]
-
-
     # Ensure numeric OHLCV
-    # Ensure numeric OHLCV (defensive against weird shapes)
     for k in ("Open", "High", "Low", "Close", "Volume"):
         if k in df.columns:
-            col = df[k]
-
-            # If, for any reason, we ended up with a 2D slice, squeeze it
-            if isinstance(col, pd.DataFrame):
-                # take first column if duplicated somehow
-                col = col.iloc[:, 0]
-
-            # squeeze 1D and coerce to numeric
-            df[k] = pd.to_numeric(col.squeeze(), errors="coerce")
-
+            df[k] = pd.to_numeric(df[k], errors="coerce")
 
     # Drop junk, sort, and add Date / _mins
     df = (
@@ -117,8 +108,11 @@ def _read_tm5(path: str) -> pd.DataFrame:
         .reset_index(drop=True)
     )
 
-    # IST-naive: treat as wall-clock, no tz conversion
+    # Canonical Date (naive, matches journal day)
     df["Date"] = df["DateTime"].dt.normalize()
+    if getattr(df["Date"].dtype, "tz", None) is not None:
+        df["Date"] = df["Date"].dt.tz_localize(None)
+
     df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
     return df
 
