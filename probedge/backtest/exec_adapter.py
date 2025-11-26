@@ -92,9 +92,19 @@ def _read_tm5(path: str) -> pd.DataFrame:
             df.rename(columns={v: k}, inplace=True)
 
     # Ensure numeric OHLCV
+    # Ensure numeric OHLCV (defensive against weird shapes)
     for k in ("Open", "High", "Low", "Close", "Volume"):
         if k in df.columns:
-            df[k] = pd.to_numeric(df[k], errors="coerce")
+            col = df[k]
+
+            # If, for any reason, we ended up with a 2D slice, squeeze it
+            if isinstance(col, pd.DataFrame):
+                # take first column if duplicated somehow
+                col = col.iloc[:, 0]
+
+            # squeeze 1D and coerce to numeric
+            df[k] = pd.to_numeric(col.squeeze(), errors="coerce")
+
 
     # Drop junk, sort, and add Date / _mins
     df = (
