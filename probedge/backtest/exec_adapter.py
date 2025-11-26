@@ -204,10 +204,48 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     # --- 2) Load TM5 for that symbol+day ---
     tm5 = _load_tm5_for_symbol(symbol)
 
-    # Filter to this trading day using DateTime.date (robust against any Date column quirks)
-    day_df = tm5[tm5["DateTime"].dt.date == day_date].copy()
+    # --- 2a) Robust day filter: try DateTime and Date columns ---
+    mask = pd.Series(False, index=tm5.index)
+
+    # Try DateTime column
+    if "DateTime" in tm5.columns:
+        dt_series = pd.to_datetime(tm5["DateTime"], errors="coerce")
+        if getattr(dt_series.dtype, "tz", None) is not None:
+            # If tz-aware, convert to naive
+            dt_series = dt_series.dt.tz_convert(None)
+        mask_dt = dt_series.dt.date == day_date
+        mask = mask | mask_dt
+
+    # Try Date column as backup (e.g. "2025-08-01 00:00:00+05:30")
+    if "Date" in tm5.columns:
+        d_series = pd.to_datetime(tm5["Date"], errors="coerce")
+        if getattr(d_series.dtype, "tz", None) is not None:
+            d_series = d_series.dt.tz_convert(None)
+        mask_date = d_series.dt.date == day_date
+        mask = mask | mask_date
+
+    day_df = tm5[mask].copy()
+
     if day_df.empty:
+        # Helpful debug: show what dates we actually have
+        avail_dates = []
+        try:
+            if "DateTime" in tm5.columns:
+                avail_dt = pd.to_datetime(tm5["DateTime"], errors="coerce")
+                if getattr(avail_dt.dtype, "tz", None) is not None:
+                    avail_dt = avail_dt.dt.tz_convert(None)
+                avail_dates = sorted({d for d in avail_dt.dt.date.dropna().unique()})
+        except Exception:
+            pass
+
+        log.error(
+            "No intraday TM5 data for %s on %s; available dates=%s",
+            symbol,
+            day_date,
+            avail_dates,
+        )
         raise RuntimeError(f"No intraday TM5 data for {symbol} on {day_date}")
+
 
     # Slice 09:40→15:05 window
     w09 = _slice_window_fast(day_df, T0_M, T1_M)
