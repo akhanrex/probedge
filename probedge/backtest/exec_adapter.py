@@ -8,76 +8,91 @@ import pandas as pd
 from probedge.infra.settings import SETTINGS
 from probedge.infra.logger import get_logger
 
-# Match Colab backtest window: 09:40 → 15:05
+log = get_logger(__name__)
+
+# Match Colab backtest window: 09:40 → 15:05 (IST wall-clock)
 T0_M = 9 * 60 + 40  # 09:40
 T1_M = 15 * 60 + 5  # 15:05
-
-log = get_logger(__name__)
 
 
 def _read_tm5(path: str) -> pd.DataFrame:
     """
-    Robust 5-min reader similar to Colab batch backtest.
-    Handles BOM, weird column names, and builds DateTime + OHLCV.
+    Robust 5-minute reader, aligned with the new minute_to_tm5 output.
 
-    Designed to work with files produced by apps.runtime.minute_to_tm5, e.g.:
-    Date,Open,High,Low,Close,Volume,DateTime,_mins
+    Expected format (from apps.runtime.minute_to_tm5):
+        Date,Open,High,Low,Close,Volume,DateTime,_mins
+
+    - Keeps IST wall-clock (drops timezone info, no UTC shift)
+    - Rebuilds Date and _mins from DateTime
     """
+    log.info("[exec_adapter] reading TM5 from %s", path)
     df = pd.read_csv(path)
 
-    # --- Clean column names (strip BOM, spaces) ---
+    # Clean column names
     df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
     df = df.loc[:, ~pd.Index(df.columns).duplicated()]
 
+    # === Fast path: new TM5 format we generate ourselves ===
+    required = {"Date", "DateTime", "Open", "High", "Low", "Close"}
+    if required.issubset(df.columns):
+        # Parse DateTime (keep wall-clock, drop tz)
+        dt = pd.to_datetime(df["DateTime"], errors="coerce")
+        if getattr(dt.dtype, "tz", None) is not None:
+            # Drop timezone but KEEP local time (09:15 stays 09:15)
+            dt = dt.dt.tz_localize(None)
+        df["DateTime"] = dt
+
+        # Parse Date, but we will recompute it from DateTime anyway
+        d = pd.to_datetime(df["Date"], errors="coerce")
+        if getattr(d.dtype, "tz", None) is not None:
+            d = d.dt.tz_localize(None)
+        df["Date"] = d
+
+        # Ensure numeric OHLCV
+        for k in ("Open", "High", "Low", "Close", "Volume"):
+            if k in df.columns:
+                df[k] = pd.to_numeric(df[k], errors="coerce")
+
+        # Drop bad rows & sort
+        df = (
+            df.dropna(subset=["DateTime", "Open", "High", "Low", "Close"])
+            .sort_values("DateTime")
+            .reset_index(drop=True)
+        )
+
+        # Canonical Date (naive) and minute-of-day
+        df["Date"] = df["DateTime"].dt.normalize()
+        df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
+
+        return df
+
+    # === Fallback path (older / weird formats, if any) ===
     lc2orig = {c.lower(): c for c in df.columns}
 
-    # --- 1) Pick a datetime source column ---
+    # Try to find some datetime column
     dt = None
-    for key in ("datetime", "date_time", "timestamp", "date"):
+    for key in ("datetime", "date_time", "timestamp"):
         if key in lc2orig:
             dt = pd.to_datetime(df[lc2orig[key]], errors="coerce")
             break
 
-    # 2) Try separate date + time columns
-    if dt is None and ("date" in lc2orig and "time" in lc2orig):
-        dt = pd.to_datetime(
-            df[lc2orig["date"]].astype(str) + " " + df[lc2orig["time"]].astype(str),
-            errors="coerce",
-        )
-
-    # 3) Try year/month/day/hour/minute style columns
-    parts = ["year", "month", "day", "hour", "minute"]
-    if dt is None and all(p in lc2orig for p in parts):
-        dt = pd.to_datetime(
-            dict(
-                year=df[lc2orig["year"]],
-                month=df[lc2orig["month"]],
-                day=df[lc2orig["day"]],
-                hour=df[lc2orig["hour"]],
-                minute=df[lc2orig["minute"]],
-            ),
-            errors="coerce",
-        )
+    # If only "date" is present and looks like full datetime, use it
+    if dt is None and "date" in lc2orig:
+        dt = pd.to_datetime(df[lc2orig["date"]], errors="coerce")
 
     if dt is None:
         raise RuntimeError(f"No recognizable datetime columns in intraday file: {path}")
 
-    # --- Canonical DateTime column ---
-    # Drop extra datetime-like columns; keep a single DateTime
-    for col in list(df.columns):
-        if col != "DateTime" and col.lower() in ("datetime", "date_time", "timestamp"):
-            df.drop(columns=col, inplace=True, errors="ignore")
+    if getattr(dt.dtype, "tz", None) is not None:
+        dt = dt.dt.tz_localize(None)
 
+    # Insert / overwrite DateTime
     if "DateTime" in df.columns:
         df["DateTime"] = dt
     else:
         df.insert(0, "DateTime", dt)
 
-    # Drop timezone if present – treat as naive IST wall-clock
-    if getattr(df["DateTime"].dtype, "tz", None) is not None:
-        df["DateTime"] = df["DateTime"].dt.tz_localize(None)
-
-    # --- Map OHLCV ---
+    # Map OHLCV with some aliases
     def pick(*aliases):
         for a in aliases:
             if a in lc2orig:
@@ -99,24 +114,19 @@ def _read_tm5(path: str) -> pd.DataFrame:
         if v and v != k:
             df.rename(columns={v: k}, inplace=True)
 
-    # --- Ensure numeric OHLCV (avoid 2D / TypeError) ---
-    num_cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
-    if num_cols:
-        df[num_cols] = df[num_cols].apply(lambda s: pd.to_numeric(s, errors="coerce"))
+    for k in ("Open", "High", "Low", "Close", "Volume"):
+        if k in df.columns:
+            df[k] = pd.to_numeric(df[k], errors="coerce")
 
-    # --- Drop junk, sort, and add Date / _mins ---
     df = (
         df.dropna(subset=["DateTime", "Open", "High", "Low", "Close"])
         .sort_values("DateTime")
         .reset_index(drop=True)
     )
 
-    # Canonical Date (naive, matches journal "day")
     df["Date"] = df["DateTime"].dt.normalize()
-    if getattr(df["Date"].dtype, "tz", None) is not None:
-        df["Date"] = df["Date"].dt.tz_localize(None)
-
     df["_mins"] = df["DateTime"].dt.hour * 60 + df["DateTime"].dt.minute
+
     return df
 
 
@@ -133,7 +143,7 @@ def _earliest_touch_times(
 ) -> Dict[str, pd.Timestamp | None]:
     """
     Earliest times price touches stop, T1, T2 in 09:40→15:05.
-    Same logic as Colab batch backtest.
+    Mirrors the Colab batch backtest logic.
     """
     if win is None or win.empty:
         return {"stop": None, "t1": None, "t2": None}
@@ -165,7 +175,7 @@ def _earliest_touch_times(
 def _load_tm5_for_symbol(symbol: str) -> pd.DataFrame:
     """
     Load intraday 5-min data for a symbol using the same path pattern
-    as the rest of the app, then parse it with the Colab-style reader.
+    as the rest of the app, then parse it with our TM5 reader.
     """
     pattern = SETTINGS.paths.intraday or "data/intraday/{sym}_5minute.csv"
     path = pattern.format(sym=symbol)
@@ -183,13 +193,7 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     """
     # --- 1) Extract journal fields ---
     symbol = str(trade_row["symbol"])
-
-    # Normalize day from journal (handle possible tz)
-    day = pd.to_datetime(trade_row["day"])
-    if getattr(day, "tzinfo", None) is not None:
-        # If this is tz-aware Timestamp, drop tz
-        day = day.tz_localize(None)
-    day = day.normalize()
+    day = pd.to_datetime(trade_row["day"]).normalize()
     day_date = day.date()
 
     side = str(trade_row["side"]).upper()
@@ -201,67 +205,50 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     t1 = float(trade_row["target1"])
     t2 = float(trade_row["target2"])
 
-    # --- 2) Load TM5 for that symbol+day ---
+    # --- 2) Load TM5 and filter to that day ---
     tm5 = _load_tm5_for_symbol(symbol)
 
-    # --- 2a) Robust day filter: try DateTime and Date columns ---
-    mask = pd.Series(False, index=tm5.index)
+    # Ensure Date is datetime
+    if not np.issubdtype(tm5["Date"].dtype, np.datetime64):
+        tm5["Date"] = pd.to_datetime(tm5["Date"], errors="coerce")
 
-    # Try DateTime column
-    if "DateTime" in tm5.columns:
-        dt_series = pd.to_datetime(tm5["DateTime"], errors="coerce")
-        if getattr(dt_series.dtype, "tz", None) is not None:
-            # If tz-aware, convert to naive
-            dt_series = dt_series.dt.tz_convert(None)
-        mask_dt = dt_series.dt.date == day_date
-        mask = mask | mask_dt
-
-    # Try Date column as backup (e.g. "2025-08-01 00:00:00+05:30")
-    if "Date" in tm5.columns:
-        d_series = pd.to_datetime(tm5["Date"], errors="coerce")
-        if getattr(d_series.dtype, "tz", None) is not None:
-            d_series = d_series.dt.tz_convert(None)
-        mask_date = d_series.dt.date == day_date
-        mask = mask | mask_date
-
-    day_df = tm5[mask].copy()
+    # Filter by calendar date
+    mask = tm5["Date"].dt.date == day_date
+    day_df = tm5.loc[mask].copy()
 
     if day_df.empty:
-        # Helpful debug: show what dates we actually have
-        avail_dates = []
-        try:
-            if "DateTime" in tm5.columns:
-                avail_dt = pd.to_datetime(tm5["DateTime"], errors="coerce")
-                if getattr(avail_dt.dtype, "tz", None) is not None:
-                    avail_dt = avail_dt.dt.tz_convert(None)
-                avail_dates = sorted({d for d in avail_dt.dt.date.dropna().unique()})
-        except Exception:
-            pass
-
+        avail_dates = sorted(
+            {d for d in tm5["Date"].dt.date.dropna().unique()}
+        )
         log.error(
-            "No intraday TM5 data for %s on %s; available dates=%s",
+            "[exec_adapter] No TM5 rows for %s on %s. Available dates: %s",
             symbol,
             day_date,
             avail_dates,
         )
         raise RuntimeError(f"No intraday TM5 data for {symbol} on {day_date}")
 
-
-    # Slice 09:40→15:05 window
+    # --- 3) Slice 09:40→15:05 window (Colab backtest window) ---
     w09 = _slice_window_fast(day_df, T0_M, T1_M)
     if w09.empty:
+        log.error(
+            "[exec_adapter] Empty 09:40–15:05 window for %s on %s (rows=%d)",
+            symbol,
+            day_date,
+            len(day_df),
+        )
         raise RuntimeError(f"No 09:40–15:05 window for {symbol} on {day_date}")
 
-    # --- 3) Determine earliest touches of stop/T1/T2 ---
+    # --- 4) Determine earliest touches of stop/T1/T2 ---
     touches = _earliest_touch_times(w09, long_side, stop, t1, t2)
     ts_stop, ts_t1, ts_t2 = touches["stop"], touches["t1"], touches["t2"]
 
-    # Risk per share from entry/stop (same as batch)
+    # Risk per share from entry/stop
     risk_per_share = (entry - stop) if long_side else (stop - entry)
     if not np.isfinite(risk_per_share) or risk_per_share <= 0:
         raise RuntimeError(f"Bad risk_per_share for {symbol} on {day_date}")
 
-    # --- 4) R1 PnL (1R target) ---
+    # --- 5) R1 PnL (1R target) ---
     if ts_t1 is not None and (ts_stop is None or ts_t1 <= ts_stop):
         # T1 hit before (or same bar as) stop
         pnl_r1 = qty * (t1 - entry) if long_side else qty * (entry - t1)
@@ -276,7 +263,7 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
         pnl_r1 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
         r1 = "EOD"
 
-    # --- 5) R2 PnL (2R target) ---
+    # --- 6) R2 PnL (2R target) ---
     if ts_t2 is not None and (ts_stop is None or ts_t2 <= ts_stop):
         pnl_r2 = qty * (t2 - entry) if long_side else qty * (entry - t2)
         r2 = "WIN"
