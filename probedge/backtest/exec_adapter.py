@@ -91,6 +91,10 @@ def _read_tm5(path: str) -> pd.DataFrame:
         if v and v != k:
             df.rename(columns={v: k}, inplace=True)
 
+    # After renames, drop any duplicate columns by name (keep first occurrence)
+    df = df.loc[:, ~pd.Index(df.columns).duplicated()]
+
+
     # Ensure numeric OHLCV
     # Ensure numeric OHLCV (defensive against weird shapes)
     for k in ("Open", "High", "Low", "Close", "Volume"):
@@ -138,9 +142,16 @@ def _earliest_touch_times(
     if win is None or win.empty:
         return {"stop": None, "t1": None, "t2": None}
 
-    hi = win["High"].to_numpy(dtype=float)
-    lo = win["Low"].to_numpy(dtype=float)
+    def _as_1d(col):
+        # handle accidental 2D frames or weird shapes
+        if isinstance(col, pd.DataFrame):
+            col = col.iloc[:, 0]
+        return pd.to_numeric(col.squeeze(), errors="coerce").to_numpy(dtype=float)
+
+    hi = _as_1d(win["High"])
+    lo = _as_1d(win["Low"])
     ts = win["DateTime"].to_numpy()
+
 
     if long:
         cond_stop = lo <= stop
@@ -246,9 +257,14 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
         r1 = "LOSS"
     else:
         # Neither T1 nor stop hit → exit at 15:05 close
-        exit_px = float(w09["Close"].iloc[-1])
+        close_col = w09["Close"]
+        if isinstance(close_col, pd.DataFrame):
+            close_col = close_col.iloc[:, 0]
+        exit_px = float(close_col.iloc[-1])
+
         pnl_r1 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
         r1 = "EOD"
+
 
     # --- 5) R2 PnL (2R target) ---
     if ts_t2 is not None and (ts_stop is None or ts_t2 <= ts_stop):
@@ -258,8 +274,14 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
         pnl_r2 = -qty * risk_per_share
         r2 = "LOSS"
     else:
-        exit_px = float(w09["Close"].iloc[-1])
+    else:
+        close_col = w09["Close"]
+        if isinstance(close_col, pd.DataFrame):
+            close_col = close_col.iloc[:, 0]
+        exit_px = float(close_col.iloc[-1])
+
         pnl_r2 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
         r2 = "EOD"
+
 
     return pnl_r1, pnl_r2, r1, r2, touches
