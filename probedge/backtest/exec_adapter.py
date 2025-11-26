@@ -1,5 +1,3 @@
-# probedge/backtest/exec_adapter.py
-
 from __future__ import annotations
 
 from typing import Dict
@@ -8,35 +6,41 @@ import numpy as np
 import pandas as pd
 
 from probedge.infra.settings import SETTINGS
-
-
+from probedge.infra.logger import get_logger
 
 # Match Colab backtest window: 09:40 → 15:05
 T0_M = 9 * 60 + 40  # 09:40
 T1_M = 15 * 60 + 5  # 15:05
+
+log = get_logger(__name__)
 
 
 def _read_tm5(path: str) -> pd.DataFrame:
     """
     Robust 5-min reader copied from Colab batch backtest.
     Handles BOM, weird column names, and builds DateTime + OHLCV.
+
+    This is designed to work with the files produced by apps.runtime.minute_to_tm5:
+    columns like: Date, Open, High, Low, Close, Volume, DateTime, _mins
     """
     df = pd.read_csv(path)
 
-    # Clean column names (strip BOM, spaces)
+    # --- Clean column names (strip BOM, spaces) ---
     df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
     df = df.loc[:, ~pd.Index(df.columns).duplicated()]
 
     lc2orig = {c.lower(): c for c in df.columns}
 
-    # 1) Try common datetime columns
+    # --- 1) Pick the time column for DateTime ---
     dt = None
+
+    # Prefer "datetime" / "date_time" / "timestamp" over "date"
     for key in ("datetime", "date_time", "timestamp", "date"):
         if key in lc2orig:
             dt = pd.to_datetime(df[lc2orig[key]], errors="coerce")
             break
 
-    # 2) Try separate date + time columns
+    # 2) Try separate date + time columns if above failed
     if dt is None and ("date" in lc2orig and "time" in lc2orig):
         dt = pd.to_datetime(
             df[lc2orig["date"]].astype(str) + " " + df[lc2orig["time"]].astype(str),
@@ -60,7 +64,8 @@ def _read_tm5(path: str) -> pd.DataFrame:
     if dt is None:
         raise RuntimeError(f"No recognizable datetime columns in intraday file: {path}")
 
-    # Canonical DateTime column
+    # --- Canonical DateTime column ---
+    # Drop any extra datetime-like columns; keep a single DateTime
     for col in list(df.columns):
         if col != "DateTime" and col.lower() in ("datetime", "date_time", "timestamp"):
             df.drop(columns=col, inplace=True, errors="ignore")
@@ -70,11 +75,11 @@ def _read_tm5(path: str) -> pd.DataFrame:
     else:
         df.insert(0, "DateTime", dt)
 
-    # 🔑 Drop timezone if present – treat as naive IST wall-clock
+    # Drop timezone if present – treat as naive IST wall-clock
     if getattr(df["DateTime"].dtype, "tz", None) is not None:
         df["DateTime"] = df["DateTime"].dt.tz_localize(None)
 
-    # Map OHLCV
+    # --- Map OHLCV ---
     def pick(*aliases):
         for a in aliases:
             if a in lc2orig:
@@ -96,19 +101,20 @@ def _read_tm5(path: str) -> pd.DataFrame:
         if v and v != k:
             df.rename(columns={v: k}, inplace=True)
 
-    # Ensure numeric OHLCV
-    for k in ("Open", "High", "Low", "Close", "Volume"):
-        if k in df.columns:
-            df[k] = pd.to_numeric(df[k], errors="coerce")
+    # --- Ensure numeric OHLCV (avoid the 2D / TypeError issue) ---
+    num_cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+    if num_cols:
+        # apply column-wise so each input is a 1D Series
+        df[num_cols] = df[num_cols].apply(lambda s: pd.to_numeric(s, errors="coerce"))
 
-    # Drop junk, sort, and add Date / _mins
+    # --- Drop junk, sort, and add Date / _mins ---
     df = (
         df.dropna(subset=["DateTime", "Open", "High", "Low", "Close"])
         .sort_values("DateTime")
         .reset_index(drop=True)
     )
 
-    # Canonical Date (naive, matches journal day)
+    # Canonical Date (naive, matches journal "day")
     df["Date"] = df["DateTime"].dt.normalize()
     if getattr(df["Date"].dtype, "tz", None) is not None:
         df["Date"] = df["Date"].dt.tz_localize(None)
@@ -130,22 +136,14 @@ def _earliest_touch_times(
 ) -> Dict[str, pd.Timestamp | None]:
     """
     Earliest times price touches stop, T1, T2 in 09:40→15:05.
-
-    This is the same logic as in your Colab batch backtest.
+    Same logic as Colab batch backtest.
     """
     if win is None or win.empty:
         return {"stop": None, "t1": None, "t2": None}
 
-    def _as_1d(col):
-        # handle accidental 2D frames or weird shapes
-        if isinstance(col, pd.DataFrame):
-            col = col.iloc[:, 0]
-        return pd.to_numeric(col.squeeze(), errors="coerce").to_numpy(dtype=float)
-
-    hi = _as_1d(win["High"])
-    lo = _as_1d(win["Low"])
+    hi = win["High"].to_numpy(dtype=float)
+    lo = win["Low"].to_numpy(dtype=float)
     ts = win["DateTime"].to_numpy()
-
 
     if long:
         cond_stop = lo <= stop
@@ -167,34 +165,29 @@ def _earliest_touch_times(
     }
 
 
-from probedge.infra.settings import SETTINGS
-from probedge.infra.logger import get_logger
-
-log = get_logger(__name__)
-
 def _load_tm5_for_symbol(symbol: str) -> pd.DataFrame:
     """
     Load intraday 5-min data for a symbol using the same path pattern
-    as the rest of the app, then parse it with the Colab _read_tm5.
+    as the rest of the app, then parse it with the Colab-style reader.
     """
     pattern = SETTINGS.paths.intraday or "data/intraday/{sym}_5minute.csv"
     path = pattern.format(sym=symbol)
     log.info("[exec_adapter] loading intraday tm5 for %s from %s", symbol, path)
     return _read_tm5(path)
 
+
 def simulate_trade_colab_style(trade_row, intraday_raw=None):
     """
     Simulate a single trade using the SAME R1/R2 resolution logic
-    as your Colab backtest code.
+    as the Colab batch backtest.
 
     Returns:
         (pnl_r1, pnl_r2, r1_result, r2_result, hit_times_dict)
     """
-    # --- 1) Extract journal fields (from data/journal/journal.csv) ---
+    # --- 1) Extract journal fields ---
     symbol = str(trade_row["symbol"])
-    day_ts = pd.to_datetime(trade_row["day"])
-    day_date = day_ts.date()
-
+    day = pd.to_datetime(trade_row["day"]).normalize()
+    day_date = day.date()
 
     side = str(trade_row["side"]).upper()
     long_side = side in ("BUY", "BULL")
@@ -205,31 +198,18 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     t1 = float(trade_row["target1"])
     t2 = float(trade_row["target2"])
 
-    # --- 2) Load TM5 for that symbol+day using the canonical reader ---
+    # --- 2) Load TM5 for that symbol+day ---
     tm5 = _load_tm5_for_symbol(symbol)
 
-    # Ensure we have a Date column to filter on
-    if "Date" not in tm5.columns and "DateTime" in tm5.columns:
-        tm5["Date"] = pd.to_datetime(tm5["DateTime"])
-    elif "Date" in tm5.columns:
-        tm5["Date"] = pd.to_datetime(tm5["Date"])
-    else:
-        raise RuntimeError(
-            f"TM5 for {symbol} missing Date/DateTime columns; columns={tm5.columns.tolist()}"
-        )
-
-    # Filter to this trading day by DATE (ignore timezone)
-    df_dates = tm5["Date"].dt.date
-    day_df = tm5[df_dates == day_date].copy()
-
+    # Filter to this trading day
+    day_df = tm5[tm5["Date"] == day].copy()
     if day_df.empty:
         raise RuntimeError(f"No intraday TM5 data for {symbol} on {day_date}")
 
-
-    # Slice 09:40→15:05 window (matches Colab backtest)
+    # Slice 09:40→15:05 window
     w09 = _slice_window_fast(day_df, T0_M, T1_M)
     if w09.empty:
-        raise RuntimeError(f"No 09:40–15:05 window for {symbol} on {day.date()}")
+        raise RuntimeError(f"No 09:40–15:05 window for {symbol} on {day_date}")
 
     # --- 3) Determine earliest touches of stop/T1/T2 ---
     touches = _earliest_touch_times(w09, long_side, stop, t1, t2)
@@ -238,7 +218,7 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
     # Risk per share from entry/stop (same as batch)
     risk_per_share = (entry - stop) if long_side else (stop - entry)
     if not np.isfinite(risk_per_share) or risk_per_share <= 0:
-        raise RuntimeError(f"Bad risk_per_share for {symbol} on {day.date()}")
+        raise RuntimeError(f"Bad risk_per_share for {symbol} on {day_date}")
 
     # --- 4) R1 PnL (1R target) ---
     if ts_t1 is not None and (ts_stop is None or ts_t1 <= ts_stop):
@@ -251,11 +231,7 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
         r1 = "LOSS"
     else:
         # Neither T1 nor stop hit → exit at 15:05 close
-        close_col = w09["Close"]
-        if isinstance(close_col, pd.DataFrame):
-            close_col = close_col.iloc[:, 0]
-        close_col = close_col.squeeze()
-        exit_px = float(close_col.iloc[-1])
+        exit_px = float(w09["Close"].iloc[-1])
         pnl_r1 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
         r1 = "EOD"
 
@@ -267,11 +243,7 @@ def simulate_trade_colab_style(trade_row, intraday_raw=None):
         pnl_r2 = -qty * risk_per_share
         r2 = "LOSS"
     else:
-        close_col = w09["Close"]
-        if isinstance(close_col, pd.DataFrame):
-            close_col = close_col.iloc[:, 0]
-        close_col = close_col.squeeze()
-        exit_px = float(close_col.iloc[-1])
+        exit_px = float(w09["Close"].iloc[-1])
         pnl_r2 = qty * (exit_px - entry) if long_side else qty * (entry - exit_px)
         r2 = "EOD"
 
