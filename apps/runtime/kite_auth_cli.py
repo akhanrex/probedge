@@ -14,7 +14,7 @@ def main():
     if status.get("authenticated"):
         print("Already authenticated:")
         print(status)
-        return
+        #return
 
     # 1) Get login URL
     url = get_login_url()
