@@ -20,7 +20,7 @@ TEN_UNIVERSE = {
 }
 
 COLAB_PATH = "data/backtest/colab_all_10stocks.csv"
-FILLS_PATH = "data/journal/fills.csv"
+FILLS_PATH = "data/journal/fills_clean.csv"
 
 
 def _normalise_colab_symbols(df: pd.DataFrame) -> pd.DataFrame:
