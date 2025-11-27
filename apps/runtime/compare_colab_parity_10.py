@@ -1,149 +1,219 @@
 from __future__ import annotations
 
-from pathlib import Path
 import pandas as pd
-import numpy as np
+
+# Fixed daily risk in both Colab and system
+DAILY_RISK_RS = 10_000.0
+
+# Logical 10-stock universe we care about
+TEN_UNIVERSE = {
+    "TMPV",
+    "SBIN",
+    "RECLTD",
+    "JSWENERGY",
+    "LT",
+    "COALINDIA",
+    "ABB",
+    "LICI",
+    "ETERNAL",
+    "JIOFIN",
+}
+
+COLAB_PATH = "data/backtest/colab_all_10stocks.csv"
+FILLS_PATH = "data/journal/fills.csv"
 
 
-def load_colab_daily_scaled() -> pd.DataFrame:
+def _normalise_colab_symbols(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Read data/backtest/colab_all_10stocks.csv (trimmed universe) and
-    compute the *expected* portfolio R2 under your current live logic:
+    Ensure we have a 'symbol' column in Colab data matching system fills.
 
-      - Colab PNL_R2 is per-symbol with 10k risk per symbol.
-      - Live system uses 10k DAILY RISK split equally.
-      - So live-equivalent portfolio_R2 for a day is:
-
-          portfolio_R2 = sum(PNL_R2_colab for active symbols)
-                         / (active_trades * 10_000)
-
-      where active_trades = number of symbols actually traded that day.
+    colab_prepare_10_universe already created a root-symbol style column for the
+    10-stock universe (TMPV, SBIN, ...). We use it if present; otherwise we
+    reconstruct it from the 'Symbol' column.
     """
-    path = Path("data/backtest/colab_all_10stocks.csv")
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing {path}. Run colab_prepare_10_universe first."
-        )
+    cols = {c.lower(): c for c in df.columns}
 
-    df = pd.read_csv(path)
-
-    # --- 1) Normalize day ---
-    if "Date" not in df.columns:
-        raise RuntimeError("Expected a 'Date' column in colab_all_10stocks.csv")
-
-    df["day"] = pd.to_datetime(df["Date"]).dt.normalize()
-
-    # --- 2) Identify active trades (non-ABSTAIN) ---
-    # Colab has Pick + Skip. We consider a row active if Skip != 'ABSTAIN'.
-    skip_col = "Skip" if "Skip" in df.columns else None
-    if skip_col is None:
-        # Fallback: treat all as active
-        df["is_active"] = True
-    else:
-        df["is_active"] = ~df[skip_col].fillna("").astype(str).str.upper().eq("ABSTAIN")
-
-    # PNL_R2 column (per-symbol, per-day)
-    pnl_col = None
-    for cand in ("PNL_R2", "pnl_r2", "Pnl_R2"):
-        if cand in df.columns:
-            pnl_col = cand
+    # Prefer root_symbol if colab_prepare_10_universe left it in the CSV
+    root_col = None
+    for key in ("root_symbol", "symbol_root", "root"):
+        if key in cols:
+            root_col = cols[key]
             break
-    if pnl_col is None:
-        raise RuntimeError("Could not find a PNL_R2 column in Colab CSV.")
 
-    # --- 3) Group by day and compute sums ---
-    grp = df.groupby("day", as_index=False)
+    if root_col is None:
+        # Fallback: derive from "Symbol" like 'SBIN_5MINUTE' -> 'SBIN'
+        if "symbol" not in cols:
+            raise RuntimeError("Colab CSV missing 'Symbol' column for symbol mapping")
+        sym_col = cols["symbol"]
 
-    daily = grp.agg(
-        colab_sum_pnl_r2=(pnl_col, "sum"),
-        colab_active_trades=("is_active", "sum"),
-    )
+        def to_root(s: str) -> str:
+            s = str(s)
+            # Typical pattern: TATAMOTORS_5MINUTE, ABB_5MINUTE, etc.
+            return s.split("_")[0]
 
-    # colab_active_trades is a float because of agg; cast to int
-    daily["colab_active_trades"] = daily["colab_active_trades"].astype(int)
+        df["symbol"] = df[sym_col].apply(to_root)
+    else:
+        df["symbol"] = df[root_col].astype(str)
 
-    # We will *not* scale here yet; we’ll scale using the system trades
-    # when we join with fills_daily.
-    return daily
-
-
-def load_system_daily() -> pd.DataFrame:
-    """
-    Read data/journal/fills_daily.csv and clean it.
-    This file comes from apps.runtime.fills_to_daily.
-    """
-    path = Path("data/journal/fills_daily.csv")
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing {path}. Run apps.runtime.fills_to_daily first."
-        )
-
-    df = pd.read_csv(path)
-
-    # Drop any bogus header-rows that slipped in as data (e.g. 'day' row)
-    day_parsed = pd.to_datetime(df["day"], errors="coerce")
-    df = df[day_parsed.notna()].copy()
-    df["day"] = day_parsed[day_parsed.notna()].dt.normalize()
-
-    # Ensure numeric columns
-    for col in ("trades", "portfolio_pnl_r1", "portfolio_pnl_r2", "portfolio_R2"):
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = df.sort_values("day").reset_index(drop=True)
+    # Make sure symbol labels are clean, uppercased
+    df["symbol"] = df["symbol"].str.strip().str.upper()
     return df
 
 
-def main():
-    colab_daily = load_colab_daily_scaled()
-    system_daily = load_system_daily()
+def load_colab_symbol_daily() -> pd.DataFrame:
+    """
+    Load Colab 10-stock universe file and aggregate to (day, symbol) PNL_R2
+    for active trades only (Skip != 'ABSTAIN').
 
-    # Inner join on day so we only compare overlapping days
-    merged = pd.merge(colab_daily, system_daily, on="day", how="inner")
+    Returns columns: [day, symbol, colab_pnl_r2]
+    """
+    colab = pd.read_csv(COLAB_PATH)
+    colab.columns = [str(c).strip() for c in colab.columns]
 
-    if merged.empty:
-        print("[compare_parity] No overlapping days between Colab and system.")
-        return
+    # Normalise symbol
+    colab = _normalise_colab_symbols(colab)
 
-    # Live system uses DAILY_RISK = 10_000 (from our design).
-    DAILY_RISK = 10_000.0
+    # Normalise date
+    if "Date" not in colab.columns:
+        raise RuntimeError("Colab CSV missing 'Date' column")
+    colab["day"] = pd.to_datetime(colab["Date"]).dt.date
 
-    # Compute expected portfolio_R2 from Colab PNL using *system trade count*
-    # Formula:
-    #   portfolio_R2_expected = sum(PNL_R2_colab) / (system_trades * DAILY_RISK)
-    # This matches: system risk per trade = DAILY_RISK / system_trades.
-    merged["system_trades"] = merged["trades"].astype(int)
-    merged["colab_portfolio_R2_expected"] = (
-        merged["colab_sum_pnl_r2"]
-        / (merged["system_trades"] * DAILY_RISK)
-        .replace({0: np.nan})
+    # Filter to our 10-stock universe
+    colab = colab[colab["symbol"].isin(TEN_UNIVERSE)].copy()
+
+    # Active trades only: Skip != 'ABSTAIN'
+    if "Skip" not in colab.columns:
+        raise RuntimeError("Colab CSV missing 'Skip' column")
+    colab["Skip"] = colab["Skip"].astype(str).str.upper().str.strip()
+    colab_active = colab[colab["Skip"] != "ABSTAIN"].copy()
+
+    # PNL_R2 must exist
+    if "PNL_R2" not in colab_active.columns:
+        raise RuntimeError("Colab CSV missing 'PNL_R2' column")
+
+    colab_active["PNL_R2"] = pd.to_numeric(colab_active["PNL_R2"], errors="coerce").fillna(0.0)
+
+    # Aggregate to one row per (day, symbol)
+    colab_symbol_daily = (
+        colab_active.groupby(["day", "symbol"], as_index=False)
+        .agg(colab_pnl_r2=("PNL_R2", "sum"))
     )
 
-    merged["R2_diff"] = merged["portfolio_R2"] - merged["colab_portfolio_R2_expected"]
+    return colab_symbol_daily
 
-    print("=== Colab vs System Daily Parity (10-stock universe) ===")
-    cols_show = [
-        "day",
-        "colab_active_trades",
-        "system_trades",
-        "colab_sum_pnl_r2",
-        "colab_portfolio_R2_expected",
-        "portfolio_pnl_r2",
-        "portfolio_R2",
-        "R2_diff",
-    ]
-    # Some columns might not exist if names changed slightly; filter safely
-    cols_show = [c for c in cols_show if c in merged.columns]
 
-    print(merged[cols_show].to_string(index=False))
+def load_system_symbol_daily() -> pd.DataFrame:
+    """
+    Load system fills and aggregate to (day, symbol) PNL_R2.
 
-    # Quick health check
-    tol = 1e-4
-    max_abs_diff = merged["R2_diff"].abs().max()
-    print()
-    print(f"[compare_parity] Max |R2_diff| across days = {max_abs_diff:.6f}")
-    if max_abs_diff < tol:
-        print("[compare_parity] ✅ System matches Colab daily R2 within tolerance.")
+    Returns columns: [day, symbol, system_pnl_r2]
+    """
+    fills = pd.read_csv(FILLS_PATH)
+    fills.columns = [str(c).strip() for c in fills.columns]
+
+    # Only paper mode parity is relevant
+    if "mode" in fills.columns:
+        fills = fills[fills["mode"].astype(str) == "paper"].copy()
+
+    # Normalise day and symbol
+    if "day" not in fills.columns:
+        raise RuntimeError("fills.csv missing 'day' column")
+    if "symbol" not in fills.columns:
+        raise RuntimeError("fills.csv missing 'symbol' column")
+
+    fills["day"] = pd.to_datetime(fills["day"]).dt.date
+    fills["symbol"] = fills["symbol"].astype(str).str.strip().str.upper()
+
+    # Restrict to our 10-stock universe just in case
+    fills = fills[fills["symbol"].isin(TEN_UNIVERSE)].copy()
+
+    if "pnl_r2" not in fills.columns:
+        raise RuntimeError("fills.csv missing 'pnl_r2' column")
+
+    fills["pnl_r2"] = pd.to_numeric(fills["pnl_r2"], errors="coerce").fillna(0.0)
+
+    system_symbol_daily = (
+        fills.groupby(["day", "symbol"], as_index=False)
+        .agg(system_pnl_r2=("pnl_r2", "sum"))
+    )
+    return system_symbol_daily
+
+
+def main() -> None:
+    colab_symbol_daily = load_colab_symbol_daily()
+    system_symbol_daily = load_system_symbol_daily()
+
+    # For each (day, symbol) that the SYSTEM actually traded, pull the Colab PNL_R2.
+    merged = pd.merge(
+        system_symbol_daily,
+        colab_symbol_daily,
+        on=["day", "symbol"],
+        how="left",
+        indicator=True,
+    )
+
+    # If any system trades have no matching Colab row, flag them
+    missing_mask = merged["_merge"] != "both"
+    if missing_mask.any():
+        missing_rows = merged.loc[missing_mask, ["day", "symbol"]].drop_duplicates()
+        print("[compare_parity] ⚠ Warning: system trades with no Colab row:")
+        print(missing_rows.to_string(index=False))
+    merged.drop(columns=["_merge"], inplace=True)
+
+    # Aggregate per day over the intersection
+    daily = (
+        merged.groupby("day", as_index=False)
+        .agg(
+            system_trades=("symbol", "count"),
+            portfolio_pnl_r2=("system_pnl_r2", "sum"),
+            colab_sum_pnl_r2=("colab_pnl_r2", "sum"),
+        )
+    )
+
+    # Also compute how many active Colab trades existed per day (across the 10 stocks)
+    colab_day_counts = (
+        colab_symbol_daily.groupby("day", as_index=False)
+        .agg(colab_active_trades=("symbol", "count"))
+    )
+
+    daily = pd.merge(daily, colab_day_counts, on="day", how="left")
+
+    # Expected portfolio R2 if system used Colab PNL but scaled down by risk_per_trade
+    # Each system trade uses risk_per_trade = DAILY_RISK_RS / system_trades
+    # Colab PNL is sized at 10k/stock, so we scale by 1/system_trades:
+    #   expected_portfolio_pnl_r2 = colab_sum_pnl_r2 / system_trades
+    #   expected_R2               = expected_portfolio_pnl_r2 / DAILY_RISK_RS
+    daily["colab_portfolio_R2_expected"] = (
+        daily["colab_sum_pnl_r2"] / (daily["system_trades"] * DAILY_RISK_RS)
+    )
+
+    daily["portfolio_R2"] = daily["portfolio_pnl_r2"] / DAILY_RISK_RS
+    daily["R2_diff"] = daily["portfolio_R2"] - daily["colab_portfolio_R2_expected"]
+
+    daily = daily[
+        [
+            "day",
+            "colab_active_trades",
+            "system_trades",
+            "colab_sum_pnl_r2",
+            "colab_portfolio_R2_expected",
+            "portfolio_pnl_r2",
+            "portfolio_R2",
+            "R2_diff",
+        ]
+    ].sort_values("day")
+
+    print("=== Colab vs System Daily Parity (10-stock universe, INTERSECTION ONLY) ===")
+    if daily.empty:
+        print("(no days with system trades found)")
+        return
+
+    print(daily.to_string(index=False))
+
+    max_abs = daily["R2_diff"].abs().max()
+    print(f"\n[compare_parity] Max |R2_diff| across days = {max_abs:.6f}")
+    if max_abs < 1e-3:
+        print("[compare_parity] ✅ R2 parity within tolerance for all days.")
     else:
         print("[compare_parity] ⚠ R2 differences above tolerance – inspect rows above.")
 
