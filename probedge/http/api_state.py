@@ -14,10 +14,12 @@ router = APIRouter()
 def _live_state_path() -> Path:
     # SETTINGS.paths.state is already "data/state/live_state.json"
     p = Path(SETTINGS.paths.state)
+    # Make it absolute relative to repo root, in case we run from a subdir
+    if not p.is_absolute():
+        p = Path.cwd() / p
     return p
 
-@router.get("/api/state")
-async def get_state():
+def _read_live_state() -> dict:
     """
     Return the latest live_state.json (fake-live or real-live).
     """
@@ -33,3 +35,10 @@ async def get_state():
         raise HTTPException(status_code=503, detail="live_state.json not ready")
 
     return state
+
+@router.get("/api/state")
+def get_state() -> dict:
+    """
+    Public endpoint for the front-end.
+    """
+    return _read_live_state()
