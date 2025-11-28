@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Probedge Live Terminal</title>
+  <link rel="stylesheet" href="/static/css/terminal.css" />
+</head>
+<body>
+  <header class="live-header">
+    <div>
+      <strong>Sim Day:</strong> <span id="simDay">-</span>
+    </div>
+    <div>
+      <strong>Sim Clock:</strong> <span id="simClock">-</span>
+    </div>
+    <div>
+      <strong>Mode:</strong> <span id="simMode">-</span>
+    </div>
+  </header>
+
+  <main>
+    <table id="liveGrid" class="live-grid">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>LTP</th>
+          <th>O</th>
+          <th>H</th>
+          <th>L</th>
+          <th>C</th>
+          <th>Volume</th>
+          <!-- reserved for later -->
+          <th>OpeningTrend</th>
+          <th>OpenLocation</th>
+          <th>PrevDayCtx</th>
+          <th>Pick</th>
+          <th>Conf%</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- rows will be injected here -->
+      </tbody>
+    </table>
+  </main>
+
+  <script src="/static/js/live.js" type="module"></script>
+</body>
+</html>
