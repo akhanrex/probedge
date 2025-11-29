@@ -18,7 +18,7 @@ from apps.api.routes.state import router as state_router
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="ProbEdge API", version="0.1.0")
+    app = FastAPI(title="Probedge API")
 
     # ---- CORS ----
     origins = SETTINGS.allowed_origins or ["*"]
@@ -30,15 +30,23 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ---- Static files (terminal UI) ----
-    static_dir = Path(__file__).parent / "static"
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    # ---- Paths ----
+    repo_root = Path(__file__).resolve().parents[2]
+    webui_dir = repo_root / "webui"
+    api_static_dir = Path(__file__).resolve().parent / "static"
 
-        @app.get("/", include_in_schema=False)
-        async def root():
-            # Serve the new debug terminal page
-            return FileResponse(static_dir / "terminal_debug.html")
+    # Serve JS/CSS from webui/ as /static/*
+    app.mount("/static", StaticFiles(directory=webui_dir), name="static")
+
+    # Live grid page
+    @app.get("/live")
+    async def live_page():
+        return FileResponse(webui_dir / "live.html")
+
+    # Keep old debug terminal at /
+    @app.get("/")
+    async def debug_terminal():
+        return FileResponse(api_static_dir / "terminal_debug.html")
 
     # ---- REST routes ----
     app.include_router(health_router)
