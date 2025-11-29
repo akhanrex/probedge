@@ -9,6 +9,7 @@ async function fetchState() {
   return await res.json();
 }
 
+
 function renderState(state) {
   if (!state) return;
 
