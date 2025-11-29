@@ -4,6 +4,7 @@ class DayController:
         # mode = sim-paper (fake-live) / live-paper / live-kite
         # risk = from config or UI
         ...
+        
 
     def preload_data(self):
         # Load TM5 for all 10 symbols for this day (same reader as backtest)
