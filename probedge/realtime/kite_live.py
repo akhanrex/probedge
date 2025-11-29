@@ -15,11 +15,16 @@ import os
 import time
 from typing import AsyncIterator, Dict, List, Tuple
 
+from dotenv import load_dotenv           # <-- NEW: load .env
+
 from kiteconnect import KiteConnect, KiteTicker
 
 from probedge.infra.settings import SETTINGS
 
 log = logging.getLogger(__name__)
+
+# Load .env so CLI scripts see the same environment as uvicorn
+load_dotenv()
 
 
 def _instruments_map(kc: KiteConnect) -> Dict[str, int]:
