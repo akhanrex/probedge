@@ -1,25 +1,35 @@
+# probedge/realtime/kite_live.py
+#
+# Synchronous tick stream using KiteTicker.
+#
+# Usage:
+#   from probedge.realtime.kite_live import tick_stream
+#   for batch in tick_stream(symbols):
+#       for sym, ts_epoch, ltp in batch:
+#           ...
+#
+# Each batch is a small list of (symbol, ts_epoch, last_price) tuples.
+
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
+import queue
 import time
 from pathlib import Path
-from typing import AsyncIterator, Dict, List, Tuple
+from typing import Dict, Iterable, Iterator, List, Tuple
 
 from dotenv import load_dotenv
-
 from kiteconnect import KiteConnect, KiteTicker
 
 from probedge.infra.settings import SETTINGS
 
 log = logging.getLogger(__name__)
 
-# Explicitly load .env from repo root (~/Downloads/probedge/probedge/.env)
+# Load .env explicitly from repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOTENV_PATH = REPO_ROOT / ".env"
 load_dotenv(dotenv_path=DOTENV_PATH, override=False)
-
 
 
 def _instruments_map(kc: KiteConnect) -> Dict[str, int]:
@@ -38,20 +48,14 @@ def _instruments_map(kc: KiteConnect) -> Dict[str, int]:
     return mp
 
 
-async def live_tick_stream(
-    symbols: List[str] | None = None,
-) -> AsyncIterator[List[Tuple[str, float, float]]]:
-    """Async generator yielding batches of market data ticks.
+def tick_stream(symbols: Iterable[str] | None = None) -> Iterator[List[Tuple[str, float, float]]]:
+    """Blocking generator yielding batches of ticks.
 
-    Each yielded `batch` is:
+    Yields:
         List[Tuple[symbol, ts_epoch, last_price]]
-
-    - `symbol` is the uppercase tradingsymbol (e.g. "SBIN").
-    - `ts_epoch` is a float UNIX timestamp (seconds since epoch).
-    - `last_price` is the LTP as float.
     """
     if symbols is None:
-        symbols = list(SETTINGS.symbols)
+        symbols = SETTINGS.symbols
 
     api_key = os.getenv("KITE_API_KEY", "").strip()
     access_token = os.getenv("KITE_ACCESS_TOKEN", "").strip()
@@ -66,11 +70,10 @@ async def live_tick_stream(
     if not tokens:
         raise RuntimeError("No instrument tokens resolved. Check symbols & KITE_ACCESS_TOKEN.")
 
-    # Reverse map: instrument_token -> symbol
     tok2sym: Dict[int, str] = {tok: sym for sym, tok in sym2tok.items()}
 
-    kt = KiteTicker(api_key, access_token)
-    queue: asyncio.Queue[Tuple[str, float, float]] = asyncio.Queue(maxsize=5000)
+    # Queue where on_ticks callback pushes ticks, main loop consumes
+    q: "queue.Queue[Tuple[str, float, float]]" = queue.Queue(maxsize=5000)
 
     def on_ticks(ws, ticks):
         now = time.time()
@@ -88,7 +91,6 @@ async def live_tick_stream(
 
             ts_val = t.get("timestamp") or t.get("exchange_timestamp") or now
             try:
-                # Kite typically passes a datetime-like object
                 if hasattr(ts_val, "timestamp"):
                     ts_epoch = float(ts_val.timestamp())
                 else:
@@ -98,9 +100,9 @@ async def live_tick_stream(
 
             triple = (sym, ts_epoch, float(ltp))
             try:
-                queue.put_nowait(triple)
-            except asyncio.QueueFull:
-                # drop ticks if consumer is lagging; health endpoint will show it
+                q.put_nowait(triple)
+            except queue.Full:
+                # drop if consumer lags
                 pass
 
     def on_connect(ws, resp):
@@ -114,40 +116,27 @@ async def live_tick_stream(
     def on_error(ws, code, reason):
         log.error("KiteTicker error: %s %s", code, reason)
 
-    kt.on_ticks = on_ticks
-    kt.on_connect = on_connect
-    kt.on_close = on_close
-    kt.on_error = on_error
+    kws = KiteTicker(api_key, access_token)
+    kws.on_ticks = on_ticks
+    kws.on_connect = on_connect
+    kws.on_close = on_close
+    kws.on_error = on_error
 
-    loop = asyncio.get_event_loop()
+    # This starts Twisted reactor in a separate thread; this call returns immediately.
+    kws.connect(threaded=True, disable_ssl_verification=False)
 
-    def _run():
-        try:
-            kt.connect(threaded=False, disable_ssl_verification=False)
-        except Exception as e:
-            log.exception("KiteTicker connect failed: %s", e)
+    # Main consumer loop
+    while True:
+        first = q.get()  # blocking
+        batch: List[Tuple[str, float, float]] = [first]
 
-    # run KiteTicker in a background thread/executor
-    loop.run_in_executor(None, _run)
-
-    try:
+        # Drain any extra ticks
         while True:
-            # block until at least one tick arrives
-            first = await queue.get()
-            batch: List[Tuple[str, float, float]] = [first]
+            try:
+                more = q.get_nowait()
+            except queue.Empty:
+                break
+            else:
+                batch.append(more)
 
-            # drain any additional ticks that arrived in the meantime
-            while True:
-                try:
-                    more = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                else:
-                    batch.append(more)
-
-            yield batch
-    finally:
-        try:
-            kt.close()
-        except Exception:
-            pass
+        yield batch
