@@ -1,21 +1,13 @@
-# probedge/realtime/kite_live.py
-#
-# Thin wrapper around KiteTicker that exposes an async tick stream:
-#   async for batch in live_tick_stream(symbols):
-#       for sym, ts_epoch, ltp in batch:
-#           ...
-#
-# Each batch is a small list of (symbol, ts_epoch, last_price) tuples.
-
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from typing import AsyncIterator, Dict, List, Tuple
 
-from dotenv import load_dotenv           # <-- NEW: load .env
+from dotenv import load_dotenv
 
 from kiteconnect import KiteConnect, KiteTicker
 
@@ -23,8 +15,11 @@ from probedge.infra.settings import SETTINGS
 
 log = logging.getLogger(__name__)
 
-# Load .env so CLI scripts see the same environment as uvicorn
-load_dotenv()
+# Explicitly load .env from repo root (~/Downloads/probedge/probedge/.env)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DOTENV_PATH = REPO_ROOT / ".env"
+load_dotenv(dotenv_path=DOTENV_PATH, override=False)
+
 
 
 def _instruments_map(kc: KiteConnect) -> Dict[str, int]:
