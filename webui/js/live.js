@@ -1,7 +1,7 @@
 // webui/js/live.js
 
 async function fetchState() {
-  const res = await fetch("/api/state", { cache: "no-cache" });
+  const res = await fetch("/api/live_state", { cache: "no-cache" });
   if (!res.ok) {
     console.warn("State fetch failed", res.status);
     return null;
