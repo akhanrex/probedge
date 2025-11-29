@@ -6,6 +6,7 @@ import math
 from datetime import datetime, date
 from math import floor
 from typing import Dict, Any, List, Optional
+from fastapi import Query
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -346,6 +347,113 @@ def api_live_state(
                 tags[key] = plan.get(key)
 
         # Plan mini-view for UI
+        confidence = None
+        if "confidence%" in plan:
+            confidence = plan.get("confidence%")
+        elif "confidence" in plan:
+            confidence = plan.get("confidence")
+
+        result_symbols[sym] = {
+            "ltp": quote.get("ltp"),
+            "ohlc": quote.get("ohlc") or {},
+            "volume": quote.get("volume"),
+            "tags": tags,
+            "plan": {
+                "pick": plan.get("pick"),
+                "confidence": confidence,
+            },
+        }
+
+    meta = {
+        "mode": mode,
+        "sim_day": sim_day_str or plan_day_str,
+        "sim_clock": sim_clock,
+    }
+
+    return {
+        "meta": meta,
+        "symbols": result_symbols,
+    }
+
+
+@router.get("/api/live_state")
+def api_live_state(
+    day: Optional[date] = Query(
+        None,
+        description="Day to use for parity plan; defaults to today or sim_day",
+    ),
+    risk: Optional[int] = Query(
+        None,
+        description="Override daily risk budget for parity plan",
+    ),
+) -> Dict[str, Any]:
+    """
+    Merge fake-live quotes from live_state.json with the parity portfolio plan.
+
+    Returns:
+    {
+      "meta": { "sim_day": ..., "sim_clock": ..., "mode": ... },
+      "symbols": {
+        "SBIN": {
+          "ltp": ...,
+          "ohlc": {"o": ..., "h": ..., "l": ..., "c": ...},
+          "volume": ...,
+          "tags": { "OpeningTrend": ..., "OpenLocation": ..., "PrevDayContext": ... },
+          "plan": { "pick": ..., "confidence": ... }
+        },
+        ...
+      }
+    }
+    """
+    # 1) Read live_state.json (quotes)
+    live_state: Dict[str, Any] = aj.read(default={}) or {}
+    quotes_by_sym: Dict[str, Any] = live_state.get("symbols") or {}
+
+    sim_day_str = live_state.get("sim_day")
+    sim_clock = live_state.get("sim_clock")
+    mode = live_state.get("mode", SETTINGS.mode)
+
+    # 2) Decide which day to use for the plan
+    if day is not None:
+        plan_day = day
+    elif sim_day_str:
+        plan_day = date.fromisoformat(sim_day_str)
+    else:
+        plan_day = date.today()
+
+    plan_day_str = plan_day.isoformat()
+
+    # 3) Build parity plan (same logic as /api/state)
+    raw_plans = _build_raw_plans_for_day(plan_day_str)
+
+    if risk is not None:
+        daily_risk_rs = int(risk)
+    else:
+        daily_risk_rs = _effective_daily_risk_rs()
+
+    portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
+    plans: List[Dict[str, Any]] = portfolio_state.get("plans") or []
+
+    plans_by_sym: Dict[str, Dict[str, Any]] = {
+        p.get("symbol"): p for p in plans if isinstance(p, dict)
+    }
+
+    # 4) Build per-symbol view for UI
+    result_symbols: Dict[str, Any] = {}
+
+    for sym in SETTINGS.symbols:
+        quote = quotes_by_sym.get(sym, {}) or {}
+        plan = plans_by_sym.get(sym, {}) or {}
+
+        tags = plan.get("tags") or {}
+        if not isinstance(tags, dict):
+            tags = {}
+
+        # Fallback if tags were flattened into the plan
+        for key in ("OpeningTrend", "OpenLocation", "PrevDayContext"):
+            if key not in tags and key in plan:
+                tags[key] = plan.get(key)
+
         confidence = None
         if "confidence%" in plan:
             confidence = plan.get("confidence%")
