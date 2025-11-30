@@ -65,9 +65,11 @@ async def debug_page():
 
 
 # --- API routers ---
-app.include_router(health_router, prefix="/api")
-app.include_router(config_router, prefix="/api")
-app.include_router(tm5_router, prefix="/api")
-app.include_router(matches_router, prefix="/api")
-app.include_router(plan_router, prefix="/api")
-app.include_router(state_router, prefix="/api")
+# Routers already declare their own /api/... prefixes.
+app.include_router(health_router)
+app.include_router(config_router)
+app.include_router(tm5_router)
+app.include_router(matches_router)
+app.include_router(plan_router)
+app.include_router(state_router)
+
