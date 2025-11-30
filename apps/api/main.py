@@ -31,9 +31,10 @@ app.add_middleware(
 this_dir = Path(__file__).resolve().parent
 api_static_dir = this_dir / "static"
 
-# repo root: .../probedge
-repo_root = this_dir.parents[2]
+# repo root: .../probedge/probedge (the directory that contains `apps/`, `probedge/`, `webui/`)
+repo_root = this_dir.parents[1]
 webui_dir = repo_root / "webui"
+
 
 # --- Static mounts ---
 # Legacy debug assets
