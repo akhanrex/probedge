@@ -1,5 +1,16 @@
 // webui/js/live.js
-// Live terminal frontend for Probedge.
+// Live terminal frontend for Probedge, with timeline-aware display.
+//
+// Backend facts:
+// - Plan is computed for full day at once (has tags + pick + qty).
+// - Playback/live write sim_day + sim_clock into /api/state_raw.
+// Our UI responsibility:
+// - Always align plan with sim_day.
+// - Respect cutovers visually:
+//     <09:25:   no tags, no plan
+//     09:25+:   show PDC
+//     09:30+:   show PDC + OL
+//     09:40+:   show PDC + OL + OT + full plan
 
 const STATE_POLL_MS = 1000;
 const HEALTH_POLL_MS = 5000;
@@ -7,7 +18,7 @@ const HEALTH_POLL_MS = 5000;
 let lastMerged = null;
 let selectedSymbol = null;
 
-// --- HTTP helpers ---
+// ---------- HTTP helpers ----------
 
 async function getJSON(url) {
   const resp = await fetch(url, { cache: "no-store" });
@@ -17,12 +28,10 @@ async function getJSON(url) {
   return resp.json();
 }
 
-// --- Merge backend structures ---
+// ---------- Tag normalization from backend plan ----------
 
 function normalizeTagsFromPlan(plan) {
-  // Backend sends:
-  //   plan.tags = { OpeningTrend, OpenLocation, PrevDayContext }
-  // or older variants.
+  // Backend may send tags inside plan.tags *and/or* as top-level keys.
   const t = plan.tags || {};
 
   const pdc =
@@ -30,7 +39,10 @@ function normalizeTagsFromPlan(plan) {
     t.pdc ??
     t.PrevDayContext ??
     t.prev_day_context ??
-    t.prevDayContext ??
+    plan.PDC ??
+    plan.pdc ??
+    plan.PrevDayContext ??
+    plan.prev_day_context ??
     null;
 
   const ol =
@@ -38,6 +50,10 @@ function normalizeTagsFromPlan(plan) {
     t.ol ??
     t.OpenLocation ??
     t.open_location ??
+    plan.OL ??
+    plan.ol ??
+    plan.OpenLocation ??
+    plan.open_location ??
     null;
 
   const ot =
@@ -45,21 +61,18 @@ function normalizeTagsFromPlan(plan) {
     t.ot ??
     t.OpeningTrend ??
     t.opening_trend ??
+    plan.OT ??
+    plan.ot ??
+    plan.OpeningTrend ??
+    plan.opening_trend ??
     null;
 
-  return {
-    PDC: pdc,
-    OL: ol,
-    OT: ot,
-  };
+  return { PDC: pdc, OL: ol, OT: ot };
 }
 
-function mergeState(rawState, planState) {
-  // rawState:
-  //   { mode, sim, sim_day, sim_clock, symbols: { SBIN: { ltp, ohlc, volume, ... }, ... } }
-  // planState:
-  //   { date, mode, daily_risk_rs, risk_per_trade_rs, total_planned_risk_rs, active_trades, plans: [...] }
+// ---------- Merge /api/state_raw + /api/state ----------
 
+function mergeState(rawState, planState) {
   const symbolsRaw = (rawState && rawState.symbols) || {};
   const plansList = (planState && planState.plans) || [];
 
@@ -72,7 +85,7 @@ function mergeState(rawState, planState) {
       ltp: q.ltp ?? null,
       ohlc: q.ohlc || null,
       volume: q.volume ?? null,
-      tags: {}, // we’ll normalize into PDC/OL/OT
+      tags: {}, // we'll normalize to PDC/OL/OT
       pick: null,
       confidence: null,
       qty: null,
@@ -84,7 +97,7 @@ function mergeState(rawState, planState) {
     };
   }
 
-  // Merge plan info
+  // Merge in plan data
   for (const p of plansList) {
     const sym =
       p.symbol ||
@@ -116,7 +129,7 @@ function mergeState(rawState, planState) {
     // Core plan fields
     row.pick = p.pick ?? row.pick;
 
-    // IMPORTANT: backend uses "confidence%"
+    // Backend uses "confidence%" for confidence
     row.confidence =
       p.confidence ??
       p.conf ??
@@ -130,16 +143,14 @@ function mergeState(rawState, planState) {
     row.tp2 = p.tp2 ?? p.target2 ?? p.tp_secondary ?? row.tp2;
     row.status = p.status ?? row.status;
 
-    // Tags: normalize whatever backend sent into PDC / OL / OT
+    // Tags normalized to PDC / OL / OT
     const normTags = normalizeTagsFromPlan(p);
-
-    // Merge on top of any existing tags from rawState (if we ever push tags via live_state.json later)
     row.tags = Object.assign({}, row.tags || {}, normTags);
   }
 
   const meta = {
     mode: planState?.mode || rawState?.mode || "unknown",
-    // playback/live day must come from sim_day
+    // playback/live day from sim_day is authoritative
     date: rawState?.sim_day || planState?.date || null,
     clock: rawState?.sim_clock || null,
     sim: rawState?.sim ?? null,
@@ -152,7 +163,7 @@ function mergeState(rawState, planState) {
   return { meta, symbols: merged };
 }
 
-// --- Formatting helpers ---
+// ---------- Formatting helpers ----------
 
 function fmtRs(x) {
   if (x == null) return "—";
@@ -191,7 +202,140 @@ function classifyMode(mode) {
   return "mode-unknown";
 }
 
-// --- Summary rendering ---
+// ---------- Timeline gating logic ----------
+
+function extractTime(meta) {
+  // meta.clock is ISO-like: "2025-08-01T09:20:00"
+  if (!meta || !meta.clock) return null;
+  const s = String(meta.clock);
+  const idx = s.indexOf("T");
+  if (idx === -1) return null;
+  return s.slice(idx + 1, idx + 9); // "HH:MM:SS"
+}
+
+function gateTagsAndPlan(row, meta) {
+  const time = extractTime(meta);
+
+  const baseTags = row.tags || {};
+  const rawPdc = baseTags.PDC ?? null;
+  const rawOl = baseTags.OL ?? null;
+  const rawOt = baseTags.OT ?? null;
+
+  let pdc = null;
+  let ol = null;
+  let ot = null;
+
+  // Defaults: hide entire plan
+  let pick = null;
+  let conf = null;
+  let qty = null;
+  let entry = null;
+  let stop = null;
+  let tp1 = null;
+  let tp2 = null;
+  let status = null;
+
+  // If we don't know the time, hide everything
+  if (!time) {
+    return {
+      pdc,
+      ol,
+      ot,
+      pick,
+      conf,
+      qty,
+      entry,
+      stop,
+      tp1,
+      tp2,
+      status,
+    };
+  }
+
+  // PHASE 1: < 09:25:00 => no tags, no plan
+  if (time < "09:25:00") {
+    return {
+      pdc,
+      ol,
+      ot,
+      pick,
+      conf,
+      qty,
+      entry,
+      stop,
+      tp1,
+      tp2,
+      status,
+    };
+  }
+
+  // PHASE 2: 09:25:00–09:29:59 => PDC only, no plan
+  if (time < "09:30:00") {
+    pdc = rawPdc;
+    return {
+      pdc,
+      ol,
+      ot,
+      pick,
+      conf,
+      qty,
+      entry,
+      stop,
+      tp1,
+      tp2,
+      status,
+    };
+  }
+
+  // PHASE 3: 09:30:00–09:39:59 => PDC + OL, no OT, no plan
+  if (time < "09:40:00") {
+    pdc = rawPdc;
+    ol = rawOl;
+    return {
+      pdc,
+      ol,
+      ot,
+      pick,
+      conf,
+      qty,
+      entry,
+      stop,
+      tp1,
+      tp2,
+      status,
+    };
+  }
+
+  // PHASE 4: >= 09:40:00 => full tags + plan visible
+  pdc = rawPdc;
+  ol = rawOl;
+  ot = rawOt;
+
+  pick = row.pick;
+  conf = row.confidence;
+  qty = row.qty;
+  entry = row.entry;
+  stop = row.stop;
+  tp1 = row.tp1;
+  tp2 = row.tp2;
+  status = row.status;
+
+  return {
+    pdc,
+    ol,
+    ot,
+    pick,
+    conf,
+    qty,
+    entry,
+    stop,
+    tp1,
+    tp2,
+    status,
+  };
+}
+
+// ---------- Summary rendering ----------
 
 function renderSummary(meta) {
   const modeEl = document.getElementById("summary-mode");
@@ -221,9 +365,10 @@ function renderSummary(meta) {
   footerMeta.textContent = meta.sim === false ? "LIVE feed" : "SIM feed";
 }
 
-// --- Grid rendering ---
+// ---------- Grid rendering ----------
 
 function renderGrid(mergedState) {
+  const meta = mergedState.meta || {};
   const tbody = document.getElementById("symbols-tbody");
   const filterInput = document.getElementById("symbol-filter");
   const filterStr = (filterInput.value || "").trim().toLowerCase();
@@ -237,19 +382,21 @@ function renderGrid(mergedState) {
     const sym = row.symbol;
     if (!sym) continue;
 
-    const tags = row.tags || {};
-    const pdc = tags.PDC ?? null;
-    const ol = tags.OL ?? null;
-    const ot = tags.OT ?? null;
+    // Apply timeline gating
+    const gated = gateTagsAndPlan(row, meta);
 
-    const pick = row.pick;
-    const conf = row.confidence;
-    const qty = row.qty;
-    const entry = row.entry;
-    const stop = row.stop;
-    const tp1 = row.tp1;
-    const tp2 = row.tp2;
-    const status = row.status;
+    const pdc = gated.pdc;
+    const ol = gated.ol;
+    const ot = gated.ot;
+
+    const pick = gated.pick;
+    const conf = gated.conf;
+    const qty = gated.qty;
+    const entry = gated.entry;
+    const stop = gated.stop;
+    const tp1 = gated.tp1;
+    const tp2 = gated.tp2;
+    const status = gated.status;
 
     // Compute change if we have OHLC
     let changePct = null;
@@ -368,7 +515,7 @@ function renderGrid(mergedState) {
 
     tr.addEventListener("click", () => {
       selectedSymbol = sym;
-      renderDetail(row, mergedState.meta);
+      renderDetail(row, meta); // detail also uses gating
     });
 
     frag.appendChild(tr);
@@ -387,7 +534,7 @@ function renderGrid(mergedState) {
   }
 }
 
-// --- Detail panel ---
+// ---------- Detail panel ----------
 
 function renderDetail(row, meta) {
   const symEl = document.getElementById("detail-symbol");
@@ -398,11 +545,13 @@ function renderDetail(row, meta) {
   const clockEl = document.getElementById("detail-clock");
   const titleEl = document.getElementById("detail-title");
 
-  const tags = row.tags || {};
+  // Apply the same gating for consistency
+  const gated = gateTagsAndPlan(row, meta);
+
   const parts = [];
-  if (tags.PDC) parts.push(`PDC: ${tags.PDC}`);
-  if (tags.OL) parts.push(`OL: ${tags.OL}`);
-  if (tags.OT) parts.push(`OT: ${tags.OT}`);
+  if (gated.pdc) parts.push(`PDC: ${gated.pdc}`);
+  if (gated.ol) parts.push(`OL: ${gated.ol}`);
+  if (gated.ot) parts.push(`OT: ${gated.ot}`);
 
   symEl.textContent = row.symbol || "—";
   titleEl.textContent = row.symbol ? `Symbol: ${row.symbol}` : "Symbol details";
@@ -410,12 +559,12 @@ function renderDetail(row, meta) {
   modeEl.textContent = meta.mode || "—";
   tagsEl.textContent = parts.length ? parts.join(" • ") : "—";
 
-  const pick = row.pick ? row.pick : "—";
-  const qty = row.qty != null ? row.qty : "—";
-  const entry = fmtNum(row.entry, 2);
-  const sl = fmtNum(row.stop, 2);
-  const t1 = fmtNum(row.tp1, 2);
-  const t2 = fmtNum(row.tp2, 2);
+  const pick = gated.pick ? gated.pick : "—";
+  const qty = gated.qty != null ? gated.qty : "—";
+  const entry = fmtNum(gated.entry, 2);
+  const sl = fmtNum(gated.stop, 2);
+  const t1 = fmtNum(gated.tp1, 2);
+  const t2 = fmtNum(gated.tp2, 2);
   planEl.textContent = `${pick} @ ${entry} / SL ${sl} / T1 ${t1} / T2 ${t2} / Qty ${qty}`;
 
   riskEl.textContent =
@@ -426,7 +575,7 @@ function renderDetail(row, meta) {
   clockEl.textContent = meta.clock || "—";
 }
 
-// --- Health rendering ---
+// ---------- Health rendering ----------
 
 function renderHealth(health) {
   const dot = document.getElementById("health-dot");
@@ -452,15 +601,15 @@ function renderHealth(health) {
   txt.textContent = reason ? `${status.toUpperCase()} – ${reason}` : status.toUpperCase();
 }
 
-// --- Poll loops ---
+// ---------- Poll loops ----------
 
 async function pollStateLoop() {
   while (true) {
     try {
-      // 1) Read raw first (gives sim_day)
+      // 1) raw -> gives sim_day and clock
       const raw = await getJSON("/api/state_raw");
 
-      // 2) Ask plan for that day
+      // 2) plan for that day
       let planUrl = "/api/state";
       if (raw && raw.sim_day) {
         planUrl = `/api/state?day=${encodeURIComponent(raw.sim_day)}`;
@@ -505,7 +654,7 @@ async function pollHealthLoop() {
   }
 }
 
-// --- Init controls ---
+// ---------- Controls ----------
 
 function initFilter() {
   const filterInput = document.getElementById("symbol-filter");
@@ -525,6 +674,8 @@ function initRiskControl() {
     alert("Risk change via UI will be wired in a later phase.");
   });
 }
+
+// ---------- Init ----------
 
 function init() {
   initFilter();
