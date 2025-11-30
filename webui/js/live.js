@@ -2,8 +2,8 @@
 // Live terminal frontend for Probedge.
 // Polls:
 //   - /api/state_raw for quotes + sim/meta
-//   - /api/state      for plan + risk summary
-//   - /api/health     for system health
+//   - /api/state?day=SIM_DAY for plan + risk summary
+//   - /api/health for system health
 //
 // Renders:
 //   - Summary bar (risk, active trades, clock)
@@ -39,15 +39,7 @@ function mergeState(rawState, planState) {
   // {
   //   date, mode, daily_risk_rs, risk_per_trade_rs,
   //   total_planned_risk_rs, active_trades,
-  //   plans: [
-  //     {
-  //       symbol, pick, confidence, qty,
-  //       entry, stop, tp1, tp2,
-  //       tags: { PDC, OL, OT, ... },
-  //       status, ...
-  //     },
-  //     ...
-  //   ]
+  //   plans: [...]
   // }
 
   const symbolsRaw = (rawState && rawState.symbols) || {};
@@ -124,7 +116,8 @@ function mergeState(rawState, planState) {
   // Build meta/summary
   const meta = {
     mode: planState?.mode || rawState?.mode || "unknown",
-    date: planState?.date || rawState?.sim_day || null,
+    // IMPORTANT: prefer sim_day (playback/live day) over planState.date
+    date: rawState?.sim_day || planState?.date || null,
     clock: rawState?.sim_clock || null,
     sim: rawState?.sim ?? null,
     daily_risk_rs: planState?.daily_risk_rs ?? null,
@@ -136,7 +129,7 @@ function mergeState(rawState, planState) {
   return { meta, symbols: merged };
 }
 
-// --- Rendering ---
+// --- Rendering helpers ---
 
 function fmtRs(x) {
   if (x == null) return "—";
@@ -174,6 +167,8 @@ function classifyMode(mode) {
   if (m.includes("test")) return "mode-test";
   return "mode-unknown";
 }
+
+// --- Summary + grid rendering ---
 
 function renderSummary(meta) {
   const modeEl = document.getElementById("summary-mode");
@@ -435,10 +430,19 @@ function renderHealth(health) {
 async function pollStateLoop() {
   while (true) {
     try {
-      const [raw, plan] = await Promise.all([
-        getJSON("/api/state_raw"),
-        getJSON("/api/state"),
-      ]);
+      // 1) Always read raw first (this gives us sim_day)
+      const raw = await getJSON("/api/state_raw");
+
+      // 2) Decide which day to ask plan for
+      let planUrl = "/api/state";
+      if (raw && raw.sim_day) {
+        planUrl = `/api/state?day=${encodeURIComponent(raw.sim_day)}`;
+      }
+
+      // 3) Fetch plan for that day
+      const plan = await getJSON(planUrl);
+
+      // 4) Merge and render
       const merged = mergeState(raw, plan);
       lastMerged = merged;
 
@@ -446,7 +450,6 @@ async function pollStateLoop() {
       renderGrid(merged);
     } catch (err) {
       console.error("state poll failed:", err);
-      // show as disconnected
       const meta = {
         mode: "disconnected",
         date: null,
@@ -492,10 +495,8 @@ function initRiskControl() {
   const input = document.getElementById("risk-input");
   const btn = document.getElementById("risk-apply-btn");
 
-  // Future: hook to /api/plan/arm_day + daily risk.
   btn.addEventListener("click", (e) => {
     e.preventDefault();
-    // no-op for now; backend contract will drive this later.
     alert("Risk change via UI will be wired in a later phase.");
   });
 }
