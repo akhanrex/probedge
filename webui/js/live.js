@@ -34,7 +34,7 @@ function normalizeTagsFromPlan(plan) {
   // Backend may send tags inside plan.tags *and/or* as top-level keys.
   const t = plan.tags || {};
 
-  const pdc =
+  let pdc =
     t.PDC ??
     t.pdc ??
     t.PrevDayContext ??
@@ -45,7 +45,7 @@ function normalizeTagsFromPlan(plan) {
     plan.prev_day_context ??
     null;
 
-  const ol =
+  let ol =
     t.OL ??
     t.ol ??
     t.OpenLocation ??
@@ -56,7 +56,7 @@ function normalizeTagsFromPlan(plan) {
     plan.open_location ??
     null;
 
-  const ot =
+  let ot =
     t.OT ??
     t.ot ??
     t.OpeningTrend ??
@@ -67,8 +67,19 @@ function normalizeTagsFromPlan(plan) {
     plan.opening_trend ??
     null;
 
+  // Fallback: if we STILL didn't get clear PDC/OL/OT but tags object has values,
+  // use their insertion order:
+  // Expected order from engine: { PrevDayContext, OpenLocation, OpeningTrend }
+  const vals = Object.values(t);
+  if (vals.length >= 3) {
+    if (!pdc) pdc = vals[0];
+    if (!ol) ol = vals[1];
+    if (!ot) ot = vals[2];
+  }
+
   return { PDC: pdc, OL: ol, OT: ot };
 }
+
 
 // ---------- Merge /api/state_raw + /api/state ----------
 
