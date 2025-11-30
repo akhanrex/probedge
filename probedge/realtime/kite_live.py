@@ -31,21 +31,57 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DOTENV_PATH = REPO_ROOT / ".env"
 load_dotenv(dotenv_path=DOTENV_PATH, override=False)
 
-
 def _instruments_map(kc: KiteConnect) -> Dict[str, int]:
-    """Build NSE symbol -> instrument_token map once for the configured universe."""
+    """Build logical symbol -> instrument_token map for our universe.
+
+    Uses SETTINGS.symbols as the logical universe and, if available,
+    SETTINGS.symbol_map (or a similar mapping) to map logical symbols
+    to real Kite tradingsymbols.
+
+    Example:
+        logical "TATAMOTORS" -> real "TMPV" (new Kite symbol)
+    """
+    # Logical universe
+    logical_syms = [s.upper() for s in SETTINGS.symbols]
+
+    # Try to get symbol_map from settings (if defined)
+    # Expected shape: {"TATAMOTORS": "TMPV", "SBIN": "SBIN", ...}
+    try:
+        symbol_map = getattr(SETTINGS, "symbol_map", {}) or {}
+    except Exception:
+        symbol_map = {}
+
+    # Build "real" tradingsymbols we will look for in Kite instruments
+    real_for_logical: Dict[str, str] = {}
+    for sym in logical_syms:
+        real = symbol_map.get(sym, sym)
+        real_for_logical[sym] = real.upper()
+
+    wanted_real = set(real_for_logical.values())
+
     table = kc.instruments("NSE")
     mp: Dict[str, int] = {}
-    want = set(s.upper() for s in SETTINGS.symbols)
+
     for row in table:
         tradingsymbol = row.get("tradingsymbol")
         token = row.get("instrument_token")
-        if tradingsymbol and token and tradingsymbol.upper() in want:
-            mp[tradingsymbol.upper()] = int(token)
-    missing = sorted(list(want - set(mp)))
+        if not tradingsymbol or not token:
+            continue
+
+        ts = tradingsymbol.upper()
+        if ts not in wanted_real:
+            continue
+
+        # Find all logical symbols that map to this real tradingsymbol
+        for logical, real_ts in real_for_logical.items():
+            if real_ts == ts:
+                mp[logical] = int(token)
+
+    missing = sorted(list(set(logical_syms) - set(mp.keys())))
     if missing:
         log.warning("Missing tokens for symbols: %s", ",".join(missing))
     return mp
+
 
 
 def tick_stream(symbols: Iterable[str] | None = None) -> Iterator[List[Tuple[str, float, float]]]:
