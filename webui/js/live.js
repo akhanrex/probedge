@@ -1,14 +1,5 @@
 // webui/js/live.js
 // Live terminal frontend for Probedge.
-// Polls:
-//   - /api/state_raw for quotes + sim/meta
-//   - /api/state?day=SIM_DAY for plan + risk summary
-//   - /api/health for system health
-//
-// Renders:
-//   - Summary bar (risk, active trades, clock)
-//   - Universe grid (quotes + tags + plan)
-//   - Detail panel (selected symbol)
 
 const STATE_POLL_MS = 1000;
 const HEALTH_POLL_MS = 5000;
@@ -28,33 +19,60 @@ async function getJSON(url) {
 
 // --- Merge backend structures ---
 
+function normalizeTagsFromPlan(plan) {
+  // Backend sends:
+  //   plan.tags = { OpeningTrend, OpenLocation, PrevDayContext }
+  // or older variants.
+  const t = plan.tags || {};
+
+  const pdc =
+    t.PDC ??
+    t.pdc ??
+    t.PrevDayContext ??
+    t.prev_day_context ??
+    t.prevDayContext ??
+    null;
+
+  const ol =
+    t.OL ??
+    t.ol ??
+    t.OpenLocation ??
+    t.open_location ??
+    null;
+
+  const ot =
+    t.OT ??
+    t.ot ??
+    t.OpeningTrend ??
+    t.opening_trend ??
+    null;
+
+  return {
+    PDC: pdc,
+    OL: ol,
+    OT: ot,
+  };
+}
+
 function mergeState(rawState, planState) {
-  // rawState shape (expected):
-  // {
-  //   mode, sim, sim_day, sim_clock,
-  //   symbols: { SBIN: { ltp, ohlc, volume, ... }, ... }
-  // }
-  //
-  // planState shape (expected):
-  // {
-  //   date, mode, daily_risk_rs, risk_per_trade_rs,
-  //   total_planned_risk_rs, active_trades,
-  //   plans: [...]
-  // }
+  // rawState:
+  //   { mode, sim, sim_day, sim_clock, symbols: { SBIN: { ltp, ohlc, volume, ... }, ... } }
+  // planState:
+  //   { date, mode, daily_risk_rs, risk_per_trade_rs, total_planned_risk_rs, active_trades, plans: [...] }
 
   const symbolsRaw = (rawState && rawState.symbols) || {};
   const plansList = (planState && planState.plans) || [];
 
-  // Build base map from quotes
   const merged = {};
 
+  // Base from quotes
   for (const [sym, q] of Object.entries(symbolsRaw)) {
     merged[sym] = {
       symbol: sym,
       ltp: q.ltp ?? null,
       ohlc: q.ohlc || null,
       volume: q.volume ?? null,
-      tags: q.tags || {},
+      tags: {}, // we’ll normalize into PDC/OL/OT
       pick: null,
       confidence: null,
       qty: null,
@@ -94,29 +112,34 @@ function mergeState(rawState, planState) {
     }
 
     const row = merged[sym];
+
+    // Core plan fields
     row.pick = p.pick ?? row.pick;
-    row.confidence = p.confidence ?? p.conf ?? row.confidence;
+
+    // IMPORTANT: backend uses "confidence%"
+    row.confidence =
+      p.confidence ??
+      p.conf ??
+      p["confidence%"] ??
+      row.confidence;
+
     row.qty = p.qty ?? p.quantity ?? row.qty;
     row.entry = p.entry ?? p.entry_price ?? row.entry;
     row.stop = p.stop ?? p.stop_loss ?? row.stop;
-    row.tp1 = p.tp1 ?? p.tp_primary ?? row.tp1;
-    row.tp2 = p.tp2 ?? p.tp_secondary ?? row.tp2;
+    row.tp1 = p.tp1 ?? p.target1 ?? p.tp_primary ?? row.tp1;
+    row.tp2 = p.tp2 ?? p.target2 ?? p.tp_secondary ?? row.tp2;
     row.status = p.status ?? row.status;
 
-    const tags =
-      p.tags ||
-      {
-        PDC: p.pdc ?? p.prev_day_context,
-        OL: p.ol ?? p.open_location,
-        OT: p.ot ?? p.opening_trend,
-      };
-    row.tags = Object.assign({}, row.tags || {}, tags || {});
+    // Tags: normalize whatever backend sent into PDC / OL / OT
+    const normTags = normalizeTagsFromPlan(p);
+
+    // Merge on top of any existing tags from rawState (if we ever push tags via live_state.json later)
+    row.tags = Object.assign({}, row.tags || {}, normTags);
   }
 
-  // Build meta/summary
   const meta = {
     mode: planState?.mode || rawState?.mode || "unknown",
-    // IMPORTANT: prefer sim_day (playback/live day) over planState.date
+    // playback/live day must come from sim_day
     date: rawState?.sim_day || planState?.date || null,
     clock: rawState?.sim_clock || null,
     sim: rawState?.sim ?? null,
@@ -129,14 +152,14 @@ function mergeState(rawState, planState) {
   return { meta, symbols: merged };
 }
 
-// --- Rendering helpers ---
+// --- Formatting helpers ---
 
 function fmtRs(x) {
   if (x == null) return "—";
   const v = Number(x);
   if (!Number.isFinite(v)) return "—";
-  if (Math.abs(v) >= 1_00_000) {
-    return "₹" + (v / 1_00_000).toFixed(1) + "L";
+  if (Math.abs(v) >= 100000) {
+    return "₹" + (v / 100000).toFixed(1) + "L";
   }
   return "₹" + v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
@@ -168,7 +191,7 @@ function classifyMode(mode) {
   return "mode-unknown";
 }
 
-// --- Summary + grid rendering ---
+// --- Summary rendering ---
 
 function renderSummary(meta) {
   const modeEl = document.getElementById("summary-mode");
@@ -198,6 +221,8 @@ function renderSummary(meta) {
   footerMeta.textContent = meta.sim === false ? "LIVE feed" : "SIM feed";
 }
 
+// --- Grid rendering ---
+
 function renderGrid(mergedState) {
   const tbody = document.getElementById("symbols-tbody");
   const filterInput = document.getElementById("symbol-filter");
@@ -213,9 +238,9 @@ function renderGrid(mergedState) {
     if (!sym) continue;
 
     const tags = row.tags || {};
-    const pdc = tags.PDC ?? tags.pdc ?? tags.prev_day_context ?? null;
-    const ol = tags.OL ?? tags.ol ?? tags.open_location ?? null;
-    const ot = tags.OT ?? tags.ot ?? tags.opening_trend ?? null;
+    const pdc = tags.PDC ?? null;
+    const ol = tags.OL ?? null;
+    const ot = tags.OT ?? null;
 
     const pick = row.pick;
     const conf = row.confidence;
@@ -288,9 +313,9 @@ function renderGrid(mergedState) {
     tdPick.textContent = safeText(pick);
     tdPick.className =
       "cell-pick " +
-      (pick === "LONG"
+      (pick === "BULL"
         ? "pick-long"
-        : pick === "SHORT"
+        : pick === "BEAR"
         ? "pick-short"
         : "pick-none");
 
@@ -362,6 +387,8 @@ function renderGrid(mergedState) {
   }
 }
 
+// --- Detail panel ---
+
 function renderDetail(row, meta) {
   const symEl = document.getElementById("detail-symbol");
   const modeEl = document.getElementById("detail-mode");
@@ -373,9 +400,9 @@ function renderDetail(row, meta) {
 
   const tags = row.tags || {};
   const parts = [];
-  if (tags.PDC ?? tags.pdc) parts.push(`PDC: ${tags.PDC ?? tags.pdc}`);
-  if (tags.OL ?? tags.ol) parts.push(`OL: ${tags.OL ?? tags.ol}`);
-  if (tags.OT ?? tags.ot) parts.push(`OT: ${tags.OT ?? tags.ot}`);
+  if (tags.PDC) parts.push(`PDC: ${tags.PDC}`);
+  if (tags.OL) parts.push(`OL: ${tags.OL}`);
+  if (tags.OT) parts.push(`OT: ${tags.OT}`);
 
   symEl.textContent = row.symbol || "—";
   titleEl.textContent = row.symbol ? `Symbol: ${row.symbol}` : "Symbol details";
@@ -430,19 +457,17 @@ function renderHealth(health) {
 async function pollStateLoop() {
   while (true) {
     try {
-      // 1) Always read raw first (this gives us sim_day)
+      // 1) Read raw first (gives sim_day)
       const raw = await getJSON("/api/state_raw");
 
-      // 2) Decide which day to ask plan for
+      // 2) Ask plan for that day
       let planUrl = "/api/state";
       if (raw && raw.sim_day) {
         planUrl = `/api/state?day=${encodeURIComponent(raw.sim_day)}`;
       }
 
-      // 3) Fetch plan for that day
       const plan = await getJSON(planUrl);
 
-      // 4) Merge and render
       const merged = mergeState(raw, plan);
       lastMerged = merged;
 
@@ -480,7 +505,7 @@ async function pollHealthLoop() {
   }
 }
 
-// --- Init ---
+// --- Init controls ---
 
 function initFilter() {
   const filterInput = document.getElementById("symbol-filter");
