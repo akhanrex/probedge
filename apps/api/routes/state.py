@@ -129,7 +129,6 @@ def _build_raw_plans_for_day(day_str: Optional[str]) -> List[Dict[str, Any]]:
 
     return raw
 
-
 def _apply_portfolio_split(
     raw_plans: List[Dict[str, Any]],
     daily_risk_rs: int,
@@ -137,72 +136,92 @@ def _apply_portfolio_split(
     """
     Take raw single-symbol plans and apply equal risk-splitting across active trades.
 
-    - Only BULL/BEAR with valid entry/stop are considered active.
+    - Only BULL/BEAR with valid entry/stop are considered active (via _is_active_plan).
     - Risk per active trade = floor(daily_risk_rs / active_count).
     - Qty = floor(risk_per_trade / |entry - stop|).
+
+    IMPORTANT:
+    We preserve all informational fields from the raw plans:
+      - tags (OpeningTrend / OpenLocation / PrevDayContext)
+      - confidence%
+      - reason, target1, target2, etc.
+
+    So /api/live_state can display full tags + confidence for transparency.
     """
+
     # Decide which date to use for the state payload (best-effort from any plan)
     day: Optional[str] = None
     for p in raw_plans:
         val = p.get("date")
         if val:
-            day = str(val).split("T")[0]
+            day = val
             break
 
+    # Identify active (tradable) plans
     active_indices = [i for i, p in enumerate(raw_plans) if _is_active_plan(p)]
     active_count = len(active_indices)
 
-    if active_count == 0 or daily_risk_rs <= 0:
-        # No trades: pass-through
+    if daily_risk_rs is None:
+        daily_risk_rs = 0
+
+    if active_count <= 0 or daily_risk_rs <= 0:
+        # No active trades → pass plans through with meta only
         return {
             "date": day,
             "mode": SETTINGS.mode,
-            "daily_risk_rs": daily_risk_rs,
+            "daily_risk_rs": int(daily_risk_rs),
             "active_trades": 0,
             "risk_per_trade_rs": 0,
-            "plans": raw_plans,
+            "total_planned_risk_rs": 0,
+            "plans": list(raw_plans),
         }
 
-    risk_per_trade_rs = int(daily_risk_rs // active_count)
+    # Equal split across active trades
+    risk_per_trade_rs: int = int(math.floor(daily_risk_rs / active_count))
 
     adjusted: List[Dict[str, Any]] = []
-    total_planned = 0.0
+    total_planned: float = 0.0
 
     for idx, p in enumerate(raw_plans):
-        q = dict(p)  # shallow copy
+        # Always start from a full copy so we don't lose tags / confidence% / targets, etc.
+        q = dict(p)
 
         if idx not in active_indices:
-            # Non-active: make sure qty and per-trade risk are zeroed for clarity
-            q["qty"] = int(q.get("qty") or 0)
-            q["per_trade_risk_rs_used"] = 0
-            q["parity_mode"] = False
+            # ABSTAIN or otherwise inactive → ensure qty is present but zero
+            q.setdefault("qty", 0)
             adjusted.append(q)
             continue
 
-        entry = float(p.get("entry"))
-        stop = float(p.get("stop"))
-        risk_per_share = abs(entry - stop)
+        entry = p.get("entry")
+        stop = p.get("stop")
 
-        if not math.isfinite(risk_per_share) or risk_per_share <= 0:
-            q["qty"] = 0
-            q["per_trade_risk_rs_used"] = 0
-            q["parity_mode"] = False
+        # Safety: if for some reason entry/stop are missing/invalid, treat as inactive.
+        if entry is None or stop is None:
+            q.setdefault("qty", 0)
             adjusted.append(q)
             continue
 
-        qty = int(risk_per_trade_rs // risk_per_share)
-
-        if qty <= 0:
-            q["qty"] = 0
-            q["per_trade_risk_rs_used"] = 0
-            q["parity_mode"] = False
+        try:
+            entry_f = float(entry)
+            stop_f = float(stop)
+        except Exception:
+            q.setdefault("qty", 0)
             adjusted.append(q)
             continue
+
+        risk_per_share = abs(entry_f - stop_f)
+        if risk_per_share <= 0:
+            q.setdefault("qty", 0)
+            adjusted.append(q)
+            continue
+
+        qty = int(math.floor(risk_per_trade_rs / risk_per_share))
+        if qty < 0:
+            qty = 0
 
         per_trade_risk = qty * risk_per_share
         total_planned += per_trade_risk
 
-        q["risk_per_share"] = risk_per_share
         q["qty"] = qty
         q["per_trade_risk_rs_used"] = per_trade_risk
         q["parity_mode"] = True
@@ -212,7 +231,7 @@ def _apply_portfolio_split(
     return {
         "date": day,
         "mode": SETTINGS.mode,
-        "daily_risk_rs": daily_risk_rs,
+        "daily_risk_rs": int(daily_risk_rs),
         "active_trades": active_count,
         "risk_per_trade_rs": risk_per_trade_rs,
         "total_planned_risk_rs": total_planned,
