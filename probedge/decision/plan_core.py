@@ -159,11 +159,23 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
         ol = ""
         pdc = ""
 
+    # Canonical tags for UI + APIs.
+    # We store both long-form and short-form keys so frontend
+    # can reliably read PDC / OL / OT.
     tags = {
-        "OpeningTrend": ot,
-        "OpenLocation": ol,
+        # Prev day context
         "PrevDayContext": pdc,
+        "PDC": pdc,
+
+        # Open location
+        "OpenLocation": ol,
+        "OL": ol,
+
+        # Opening trend
+        "OpeningTrend": ot,
+        "OT": ot,
     }
+
 
     # ---------- Load master for freq pick ----------
     p_master = locate_for_read("masters", sym_upper)
