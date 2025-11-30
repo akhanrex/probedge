@@ -366,15 +366,29 @@ function renderSummary(meta) {
   dateEl.textContent = meta.date || "—";
   clockEl.textContent = meta.clock || "—";
 
+  // Always show the budget (this is what YOU set)
   dailyRiskEl.textContent = fmtRs(meta.daily_risk_rs);
-  plannedRiskEl.textContent = fmtRs(meta.total_planned_risk_rs);
-  rptEl.textContent = fmtRs(meta.risk_per_trade_rs);
-  activeEl.textContent =
-    meta.active_trades == null ? "—" : String(meta.active_trades);
+
+  // Timeline gating for plan info in summary as well
+  const time = extractTime(meta);
+
+  if (!time || time < "09:40:00") {
+    // Before 09:40, hide plan-related aggregates
+    plannedRiskEl.textContent = "—";
+    rptEl.textContent = "—";
+    activeEl.textContent = "—";
+  } else {
+    // From 09:40 onwards, show full plan numbers
+    plannedRiskEl.textContent = fmtRs(meta.total_planned_risk_rs);
+    rptEl.textContent = fmtRs(meta.risk_per_trade_rs);
+    activeEl.textContent =
+      meta.active_trades == null ? "—" : String(meta.active_trades);
+  }
 
   updatedEl.textContent = meta.clock || "—";
   footerMeta.textContent = meta.sim === false ? "LIVE feed" : "SIM feed";
 }
+
 
 // ---------- Grid rendering ----------
 
