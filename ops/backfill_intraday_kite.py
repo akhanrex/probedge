@@ -3,6 +3,17 @@ from pathlib import Path
 import pandas as pd
 from kiteconnect import KiteConnect
 from probedge.infra.settings import SETTINGS
+from dotenv import load_dotenv
+
+
+# --- Load .env from repo root so KITE_* are available ---
+ROOT = Path(__file__).resolve().parents[1]  # /Users/.../probedge/probedge
+dotenv_path = ROOT / ".env"
+load_dotenv(dotenv_path)
+
+# Now these will work:
+# os.environ["KITE_API_KEY"]
+# os.environ["KITE_ACCESS_TOKEN"]
 
 # --- kite init ---
 api_key = os.environ["KITE_API_KEY"]
