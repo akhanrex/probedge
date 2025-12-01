@@ -22,8 +22,11 @@ kite = KiteConnect(api_key=api_key)
 kite.set_access_token(acc_tok)
 
 # --- paths ---
-INTRA_DIR = Path(getattr(SETTINGS.paths, "intraday", "data/intraday"))
+# For backfill we hard-code to the repo's data/intraday folder,
+# ignoring any templated {sym} settings.
+INTRA_DIR = ROOT / "data" / "intraday"
 INTRA_DIR.mkdir(parents=True, exist_ok=True)
+
 
 # --- symbol map ---
 mp = {}
