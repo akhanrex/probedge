@@ -112,11 +112,42 @@ for sym in SETTINGS.symbols:
     if path.exists():
         cur = pd.read_csv(path)
         if not cur.empty:
-            cur["DateTime"] = pd.to_datetime(cur["DateTime"], errors="coerce")
-            cur["Date"] = pd.to_datetime(
-                cur.get("Date", cur["DateTime"].dt.normalize()),
-                errors="coerce"
-            ).dt.tz_localize(None).dt.normalize()
+            # Handle both old-style (date,open,high,low,close,volume)
+            # and new-style (DateTime,Open,High,Low,Close,Volume,Date)
+            cols = {c.lower(): c for c in cur.columns}
+
+            # 1) Build DateTime
+            if "datetime" in cols:
+                # Already has DateTime
+                dt_col = cols["datetime"]
+                cur["DateTime"] = pd.to_datetime(cur[dt_col], errors="coerce")
+            elif "date" in cols:
+                # Old-style: 'date' column
+                dcol = cols["date"]
+                cur["DateTime"] = pd.to_datetime(cur[dcol], errors="coerce")
+            else:
+                # No usable time column → mark empty so we don't break
+                cur["DateTime"] = pd.NaT
+
+            # 2) Normalize OHLCV to capital names
+            rename_map = {}
+            for key, std in [
+                ("open", "Open"),
+                ("high", "High"),
+                ("low", "Low"),
+                ("close", "Close"),
+                ("volume", "Volume"),
+            ]:
+                if key in cols:
+                    rename_map[cols[key]] = std
+            if rename_map:
+                cur = cur.rename(columns=rename_map)
+
+            # 3) Build Date column
+            if "Date" in cur.columns:
+                cur["Date"] = pd.to_datetime(cur["Date"], errors="coerce").dt.tz_localize(None).dt.normalize()
+            else:
+                cur["Date"] = cur["DateTime"].dt.tz_localize(None).dt.normalize()
     have = set(cur["Date"].dropna().unique()) if not cur.empty else set()
     adds = []
     for d in days:
