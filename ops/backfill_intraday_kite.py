@@ -27,9 +27,9 @@ kite = KiteConnect(api_key=api_key)
 kite.set_access_token(acc_tok)
 
 # ------------------------------------------------------
-# 2) Paths
+# 2) Paths (HARD-CODED to data/intraday)
 # ------------------------------------------------------
-INTRA_DIR = Path(getattr(SETTINGS.paths, "intraday", "data/intraday"))
+INTRA_DIR = ROOT / "data" / "intraday"
 INTRA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ------------------------------------------------------
@@ -80,6 +80,7 @@ def instrument_token_for(sym: str) -> int:
 
 
 def path_for(sym: str) -> Path:
+    # Always write to data/intraday/<SYM>_5minute.csv
     return INTRA_DIR / f"{sym}_5minute.csv"
 
 
@@ -89,9 +90,9 @@ def path_for(sym: str) -> Path:
 def unify_existing(path: Path) -> pd.DataFrame:
     """
     Read existing intraday CSV in either:
-      - legacy format: date,open,high,low,close,volume
-      - new format: DateTime,Open,High,Low,Close,Volume,(Date?)
-    and return DataFrame with columns:
+      - legacy: date,open,high,low,close,volume
+      - new:    DateTime,Open,High,Low,Close,Volume,(Date?)
+    Return df with:
       DateTime (naive, Asia/Kolkata local clock)
       Open, High, Low, Close, Volume
       Date (normalized date)
@@ -116,11 +117,10 @@ def unify_existing(path: Path) -> pd.DataFrame:
     # Newer schema: "DateTime,Open,High,Low,Close,Volume"
     elif "DateTime" in cur.columns:
         dt = pd.to_datetime(cur["DateTime"], errors="coerce")
-        # If tz-aware (e.g. strings with +05:30) → convert to naive Asia/Kolkata
+        # If tz-aware (e.g. +05:30 strings) → convert to naive Asia/Kolkata
         if is_datetime64tz_dtype(dt.dtype):
             dt = dt.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
         cur["DateTime"] = dt
-
         if "Open" not in cur.columns or "High" not in cur.columns:
             raise ValueError(f"{path} missing OHLC columns.")
     else:
@@ -138,9 +138,8 @@ def unify_existing(path: Path) -> pd.DataFrame:
 # ------------------------------------------------------
 def fetch_day(token: int, day: pd.Timestamp) -> pd.DataFrame:
     """
-    Pull 1-minute data for one day and convert to our 5-min compatible schema.
-    We keep 1-min bars here; 5-min aggregation is handled elsewhere in pipeline
-    via read_tm5_csv → 5-minute resample.
+    Pull 1-minute data for one day and convert to our schema.
+    We keep 1-min bars; 5-min aggregation is done later by read_tm5_csv.
     """
     fr = (
         pd.Timestamp(day)
@@ -165,7 +164,6 @@ def fetch_day(token: int, day: pd.Timestamp) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(data)
-    # Kite returns tz-aware; convert to naive Asia/Kolkata local time
     dt = pd.to_datetime(df["date"]).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
     df["DateTime"] = dt
     df = df.rename(
@@ -188,7 +186,7 @@ def fetch_day(token: int, day: pd.Timestamp) -> pd.DataFrame:
 # ------------------------------------------------------
 def last_n_bdays(n: int):
     today = pd.Timestamp.today(tz="Asia/Kolkata").normalize().tz_localize(None)
-    start = today - pd.Timedelta(days=int(n * 2))  # overshoot and let empty fetches drop
+    start = today - pd.Timedelta(days=int(n * 2))
     return pd.date_range(start, today, freq="B").date
 
 
@@ -245,7 +243,7 @@ def main():
         )
 
         out = new.copy()
-        # Keep existing convention: ISO string with +05:30
+        # Write as ISO string with +05:30, and Date as YYYY-MM-DD
         out["DateTime"] = out["DateTime"].dt.strftime("%Y-%m-%dT%H:%M:%S+05:30")
         out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
         out.to_csv(path, index=False)
