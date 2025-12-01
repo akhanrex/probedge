@@ -115,22 +115,29 @@ for sym in SETTINGS.symbols:
     if path.exists():
         cur = pd.read_csv(path)
         if not cur.empty:
-            # Handle both old-style (date,open,high,low,close,volume)
-            # and new-style (DateTime,Open,High,Low,Close,Volume,Date)
-            cols = {c.lower(): c for c in cur.columns}
-
-            # 1) Build DateTime
-            if "datetime" in cols:
-                # Already has DateTime
-                dt_col = cols["datetime"]
-                cur["DateTime"] = pd.to_datetime(cur[dt_col], errors="coerce")
-            elif "date" in cols:
-                # Old-style: 'date' column
-                dcol = cols["date"]
-                cur["DateTime"] = pd.to_datetime(cur[dcol], errors="coerce")
+            # --- unify schema for existing file ---
+            # 1) Build DateTime (tz-naive, Asia/Kolkata) from either:
+            #    - existing "DateTime" column (string with or without tz)
+            #    - OR old "date" column (string)
+            if "DateTime" in cur.columns:
+                cur_dt = pd.to_datetime(cur["DateTime"], utc=True, errors="coerce")
+            elif "date" in cur.columns:
+                cur_dt = pd.to_datetime(cur["date"], utc=True, errors="coerce")
             else:
-                # No usable time column → mark empty so we don't break
-                cur["DateTime"] = pd.NaT
+                raise ValueError(f"{path} has neither DateTime nor date column")
+
+            # Convert to Asia/Kolkata local and then drop tz → naive
+            cur_dt = cur_dt.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+            cur["DateTime"] = cur_dt
+
+            # 2) Build Date column as normalized local date
+            if "Date" in cur.columns:
+                cur_date = pd.to_datetime(cur["Date"], utc=True, errors="coerce")
+                cur_date = cur_date.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None).dt.normalize()
+                cur["Date"] = cur_date
+            else:
+                cur["Date"] = cur["DateTime"].dt.normalize()
+
 
             # 2) Normalize OHLCV to capital names
             rename_map = {}
