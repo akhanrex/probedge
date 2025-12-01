@@ -105,15 +105,18 @@ def last_n_days(n=120):
 days = list(last_n_days(120))
 
 for sym in SETTINGS.symbols:
-    ts = ts_for(sym)
-    token = by_ts[ts]["instrument_token"]
+    # ts_for already returns the Kite instrument_token (int)
+    token = ts_for(sym)
     path = path_for(sym)
     cur = pd.DataFrame()
     if path.exists():
         cur = pd.read_csv(path)
         if not cur.empty:
             cur["DateTime"] = pd.to_datetime(cur["DateTime"], errors="coerce")
-            cur["Date"] = pd.to_datetime(cur.get("Date", cur["DateTime"].dt.normalize()), errors="coerce").dt.tz_localize(None).dt.normalize()
+            cur["Date"] = pd.to_datetime(
+                cur.get("Date", cur["DateTime"].dt.normalize()),
+                errors="coerce"
+            ).dt.tz_localize(None).dt.normalize()
     have = set(cur["Date"].dropna().unique()) if not cur.empty else set()
     adds = []
     for d in days:
@@ -129,12 +132,18 @@ for sym in SETTINGS.symbols:
 
     if adds:
         new = pd.concat([cur] + adds, ignore_index=True) if not cur.empty else pd.concat(adds, ignore_index=True)
-        new = new.dropna(subset=["DateTime","Open","High","Low","Close"]).sort_values("DateTime").drop_duplicates("DateTime", keep="last")
+        new = (
+            new
+            .dropna(subset=["DateTime","Open","High","Low","Close"])
+            .sort_values("DateTime")
+            .drop_duplicates("DateTime", keep="last")
+        )
     else:
         new = cur
 
     if new.empty:
-        print(f"[{sym}] no data written (still empty)"); continue
+        print(f"[{sym}] no data written (still empty)")
+        continue
 
     # write as ISO w/ +05:30 string (your existing convention)
     out = new.copy()
@@ -142,4 +151,6 @@ for sym in SETTINGS.symbols:
     out["Date"] = pd.to_datetime(out["Date"]).dt.strftime("%Y-%m-%d")
     out.to_csv(path, index=False)
     print(f"[{sym}] intraday rows={len(new)} (added {sum(len(x) for x in adds) if adds else 0}) → {path}")
+
 print("Done backfill.")
+
