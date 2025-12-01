@@ -36,25 +36,45 @@ print("Downloading NSE instruments…")
 instruments = kite.instruments("NSE")
 by_ts = {row["tradingsymbol"].upper(): row for row in instruments}
 
+
 # Logical-symbol → Kite tradingsymbol overrides
 SYMBOL_TS_OVERRIDE = {
     # Tata Motors ordinary share: now trades as TMPV on NSE
     "TATAMOTORS": "TMPV",
 }
 
-def ts_for(sym: str) -> int:
+def resolve_tradingsymbol(sym: str) -> str:
     """
-    Map our logical symbol (e.g. TATAMOTORS) to Kite's current
-    tradingsymbol (e.g. TMPV), then return its instrument_token.
+    Resolve our logical symbol (e.g. TATAMOTORS) to a Kite tradingsymbol
+    using symbol_map.json first, then hard overrides (e.g. TMPV).
     """
     logical = sym.upper()
-    ts = SYMBOL_TS_OVERRIDE.get(logical, logical)
+    ts = logical
 
-    df = instruments_df
-    row = df[(df["segment"] == "NSE") & (df["tradingsymbol"] == ts)]
-    if row.empty:
-        raise ValueError(f"Tradingsymbol not found on NSE: {ts} (for {logical})")
-    return int(row["instrument_token"].iloc[0])
+    # 1) Try symbol_map.json if present
+    if logical in mp:
+        v = mp[logical]
+        if isinstance(v, dict):
+            ts = v.get("tradingsymbol", logical).upper()
+        elif isinstance(v, str):
+            ts = v.upper()
+
+    # 2) Apply hard overrides (e.g. TATAMOTORS → TMPV)
+    ts = SYMBOL_TS_OVERRIDE.get(logical, ts)
+
+    return ts
+
+def ts_for(sym: str) -> int:
+    """
+    Return Kite instrument_token for our logical symbol.
+    Uses the by_ts dict built from kite.instruments("NSE").
+    """
+    ts = resolve_tradingsymbol(sym)
+    row = by_ts.get(ts)
+    if not row:
+        raise ValueError(f"Tradingsymbol not found on NSE: {ts} (for {sym})")
+    return int(row["instrument_token"])
+
 
 
 def path_for(sym: str) -> Path:
