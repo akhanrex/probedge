@@ -107,57 +107,34 @@ def last_n_days(n=120):
 
 days = list(last_n_days(120))
 
-for sym in SETTINGS.symbols:
-    # ts_for already returns the Kite instrument_token (int)
-    token = ts_for(sym)
-    path = path_for(sym)
     cur = pd.DataFrame()
     if path.exists():
         cur = pd.read_csv(path)
         if not cur.empty:
-            # --- unify schema for existing file ---
-            # 1) Build DateTime (tz-naive, Asia/Kolkata) from either:
-            #    - existing "DateTime" column (string with or without tz)
-            #    - OR old "date" column (string)
-            if "DateTime" in cur.columns:
-                cur_dt = pd.to_datetime(cur["DateTime"], utc=True, errors="coerce")
-            elif "date" in cur.columns:
-                cur_dt = pd.to_datetime(cur["date"], utc=True, errors="coerce")
+            # --- unify legacy vs new schema ---
+
+            # CASE 1: legacy files: "date,open,high,low,close,volume"
+            if "date" in cur.columns and "open" in cur.columns:
+                # Build DateTime from legacy "date" column (no timezone)
+                cur["DateTime"] = pd.to_datetime(cur["date"], errors="coerce")
+
+                # Normalize column names
+                cur["Open"] = cur["open"]
+                cur["High"] = cur["high"]
+                cur["Low"] = cur["low"]
+                cur["Close"] = cur["close"]
+                cur["Volume"] = cur["volume"]
+
+            # CASE 2: already in new schema: "DateTime,Open,High,Low,Close,Volume,..."
+            elif "DateTime" in cur.columns:
+                cur["DateTime"] = pd.to_datetime(cur["DateTime"], errors="coerce")
+
             else:
-                raise ValueError(f"{path} has neither DateTime nor date column")
+                raise ValueError(f"{path} has neither legacy 'date' nor 'DateTime' column")
 
-            # Convert to Asia/Kolkata local and then drop tz → naive
-            cur_dt = cur_dt.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-            cur["DateTime"] = cur_dt
+            # Build Date as normalized local date (no timezone)
+            cur["Date"] = cur["DateTime"].dt.normalize()
 
-            # 2) Build Date column as normalized local date
-            if "Date" in cur.columns:
-                cur_date = pd.to_datetime(cur["Date"], utc=True, errors="coerce")
-                cur_date = cur_date.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None).dt.normalize()
-                cur["Date"] = cur_date
-            else:
-                cur["Date"] = cur["DateTime"].dt.normalize()
-
-
-            # 2) Normalize OHLCV to capital names
-            rename_map = {}
-            for key, std in [
-                ("open", "Open"),
-                ("high", "High"),
-                ("low", "Low"),
-                ("close", "Close"),
-                ("volume", "Volume"),
-            ]:
-                if key in cols:
-                    rename_map[cols[key]] = std
-            if rename_map:
-                cur = cur.rename(columns=rename_map)
-
-            # 3) Build Date column
-            if "Date" in cur.columns:
-                cur["Date"] = pd.to_datetime(cur["Date"], errors="coerce").dt.tz_localize(None).dt.normalize()
-            else:
-                cur["Date"] = cur["DateTime"].dt.tz_localize(None).dt.normalize()
     have = set(cur["Date"].dropna().unique()) if not cur.empty else set()
     adds = []
     for d in days:
