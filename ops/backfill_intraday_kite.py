@@ -36,11 +36,26 @@ print("Downloading NSE instruments…")
 instruments = kite.instruments("NSE")
 by_ts = {row["tradingsymbol"].upper(): row for row in instruments}
 
-def ts_for(sym: str) -> str:
-    t = mp.get(sym, sym).upper()
-    if t not in by_ts:
-        raise ValueError(f"Tradingsymbol not found on NSE: {t} (for {sym})")
-    return t
+# Logical-symbol → Kite tradingsymbol overrides
+SYMBOL_TS_OVERRIDE = {
+    # Tata Motors ordinary share: now trades as TMPV on NSE
+    "TATAMOTORS": "TMPV",
+}
+
+def ts_for(sym: str) -> int:
+    """
+    Map our logical symbol (e.g. TATAMOTORS) to Kite's current
+    tradingsymbol (e.g. TMPV), then return its instrument_token.
+    """
+    logical = sym.upper()
+    ts = SYMBOL_TS_OVERRIDE.get(logical, logical)
+
+    df = instruments_df
+    row = df[(df["segment"] == "NSE") & (df["tradingsymbol"] == ts)]
+    if row.empty:
+        raise ValueError(f"Tradingsymbol not found on NSE: {ts} (for {logical})")
+    return int(row["instrument_token"].iloc[0])
+
 
 def path_for(sym: str) -> Path:
     return INTRA_DIR / f"{sym}_5minute.csv"
