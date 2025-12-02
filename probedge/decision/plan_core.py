@@ -151,13 +151,13 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
     prev_ohlc = prev_trading_day_ohlc(tm5, day_norm)
     ot = compute_openingtrend_robust(df_day)
     if prev_ohlc:
+        # Use the same signatures as ops/rebuild_master_recent.py (classifiers)
         ol = compute_openlocation_from_df(df_day, prev_ohlc)
-        pdc = compute_prevdaycontext_robust(
-            prev_ohlc["open"], prev_ohlc["high"], prev_ohlc["low"], prev_ohlc["close"]
-        )
+        pdc = compute_prevdaycontext_robust(prev_ohlc)
     else:
         ol = ""
         pdc = ""
+
 
     tags = {
         "OpeningTrend": ot,
