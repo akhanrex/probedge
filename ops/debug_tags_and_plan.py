@@ -1,9 +1,6 @@
-#!/usr/bin/env python
 import argparse
-from pathlib import Path
-from typing import Optional, Dict, Any
-
 import pandas as pd
+from pathlib import Path
 
 from probedge.storage.resolver import locate_for_read
 from probedge.infra.loaders import read_tm5_csv
@@ -11,130 +8,134 @@ from probedge.core import classifiers as C
 from probedge.decision.plan_core import build_parity_plan
 
 
-def _load_tm5(sym: str) -> pd.DataFrame:
-    p = locate_for_read("intraday", sym)
-    if not p.exists():
-        raise FileNotFoundError(f"TM5 not found for {sym}: {p}")
-    df = read_tm5_csv(p)
-    # Ensure Date column
-    if "Date" not in df.columns:
-        df["Date"] = df["DateTime"].dt.date
-    else:
-        df["Date"] = pd.to_datetime(df["Date"]).dt.date
-    return df
+def debug_symbol_day(symbol: str, day_str: str) -> None:
+    sym = symbol.upper()
+    day_ts = pd.to_datetime(day_str)
+    day_date = day_ts.date()
 
+    print(f"=== DEBUG {sym} {day_date} ===")
 
-def _load_master(sym: str) -> pd.DataFrame:
-    p = locate_for_read("masters", sym)
-    if not p.exists():
-        raise FileNotFoundError(f"MASTER not found for {sym}: {p}")
-    df = pd.read_csv(p)
-    if "Date" not in df.columns:
-        raise ValueError(f"MASTER for {sym} has no Date column: {p}")
-    df["Date"] = pd.to_datetime(df["Date"]).dt.date
-    return df
+    # --- Load intraday (TM5) ---
+    p_tm5 = locate_for_read("intraday", sym)
+    if not p_tm5.exists():
+        print(f"[TM5] intraday file not found for {sym}: {p_tm5}")
+        return
 
+    tm5 = read_tm5_csv(p_tm5)
 
-def _classifier_tags(tm5: pd.DataFrame, day_date) -> Dict[str, Any]:
-    day_ts = pd.Timestamp(day_date)
+    if "DateTime" not in tm5.columns:
+        print("[TM5] no DateTime column; cannot proceed")
+        return
 
-    prev_ohlc = C.prev_trading_day_ohlc(tm5, day_ts)
-    pdc = C.compute_prevdaycontext_robust(prev_ohlc)
+    tm5["DateTime"] = pd.to_datetime(tm5["DateTime"], errors="coerce")
+    tm5 = tm5.dropna(subset=["DateTime"])
+    tm5["Date"] = tm5["DateTime"].dt.date
 
-    ol = C.compute_openlocation_from_df(tm5, day_ts, prev_ohlc)
-    ot = C.compute_openingtrend_robust(tm5, day_ts)
-
-    return {
-        "PrevDayContext": pdc,
-        "OpenLocation": ol,
-        "OpeningTrend": ot,
-        "prev_ohlc": prev_ohlc,
-    }
-
-
-def _fmt(d: Optional[Dict[str, Any]]) -> str:
-    if not d:
-        return "None"
-    return ", ".join(f"{k}={v}" for k, v in d.items())
-
-
-def main():
-    ap = argparse.ArgumentParser(description="Debug tags + plan parity for one symbol/day")
-    ap.add_argument("--symbol", "-s", required=True, help="Symbol, e.g. SBIN")
-    ap.add_argument("--day", "-d", required=True, help="Day YYYY-MM-DD, e.g. 2025-12-01")
-    args = ap.parse_args()
-
-    sym = args.symbol.upper()
-    day_str = args.day
-    day_date = pd.to_datetime(day_str).date()
-
-    print(f"=== DEBUG {sym} {day_str} ===")
-
-    # ---------- TM5 + day slice ----------
-    tm5 = _load_tm5(sym)
+    # Slice day
     df_day = tm5[tm5["Date"] == day_date].copy()
-
+    print(f"[TM5] Rows for {sym} on {day_date}: {len(df_day)}")
     if df_day.empty:
-        print(f"[TM5] No intraday rows for {sym} on {day_str}")
-    else:
-        print(f"[TM5] Rows for {sym} on {day_str}: {len(df_day)}")
-        print(df_day[["DateTime", "Open", "High", "Low", "Close"]].head(6).to_string(index=False))
-        print("... ORB window (09:15–09:35 approx):")
-        if "_mins" in df_day.columns:
-            orb = df_day[(df_day["_mins"] >= 9*60+15) & (df_day["_mins"] <= 9*60+35)]
-        else:
-            # Derive minutes-from-midnight if not present
-            dt = pd.to_datetime(df_day["DateTime"])
-            mins = dt.dt.hour * 60 + dt.dt.minute
-            orb = df_day[(mins >= 9*60+15) & (mins <= 9*60+35)]
-        print(orb[["DateTime", "Open", "High", "Low", "Close"]].to_string(index=False))
+        print("[TM5] no intraday rows for this day; stop")
+        return
 
-    # ---------- MASTER row ----------
-    print("\n=== MASTER row ===")
+    print(df_day[["DateTime", "Open", "High", "Low", "Close"]].head())
+    print("... ORB window (09:15–09:35 approx):")
+
+    # ORB window from intraday
+    day_idx = df_day.set_index("DateTime").sort_index()
     try:
-        master = _load_master(sym)
-        row = master[master["Date"] == day_date]
-        if row.empty:
-            print(f"[MASTER] No row for {sym} on {day_str}")
-        else:
-            r = row.iloc[0].to_dict()
-            print(f"[MASTER] {r}")
-    except Exception as e:
-        print(f"[MASTER] ERROR: {e}")
-        master = None
+        orb = day_idx.between_time("09:15", "09:35")
+    except TypeError:
+        # if DateTime is tz-aware index, between_time still works; keep as safety
+        orb = day_idx
 
-    # ---------- Classifier tags directly from TM5 ----------
+    print(orb[["Open", "High", "Low", "Close"]].loc[:].head(25))
+
+    # --- Prev trading day OHLC from intraday ---
+    prev_days = sorted(d for d in tm5["Date"].unique() if d < day_date)
+    if prev_days:
+        prev_date = prev_days[-1]
+        prev_df = tm5[tm5["Date"] == prev_date].copy()
+        prev_open = float(prev_df["Open"].iloc[0])
+        prev_high = float(prev_df["High"].max())
+        prev_low = float(prev_df["Low"].min())
+        prev_close = float(prev_df["Close"].iloc[-1])
+        print(f"\n[PREV] nearest prior trading day in TM5: {prev_date}")
+        print(
+            f"[PREV] OHLC (computed from intraday): "
+            f"O={prev_open}, H={prev_high}, L={prev_low}, C={prev_close}"
+        )
+    else:
+        prev_date = None
+        print("\n[PREV] no prior trading day found in TM5")
+
+    # --- Classifier tags directly from core.classifiers ---
     print("\n=== Classifier tags (from probedge.core.classifiers) ===")
     try:
-        class_tags = _classifier_tags(tm5, day_date)
-        print(f"[C] PDC={class_tags['PrevDayContext']}, "
-              f"OL={class_tags['OpenLocation']}, "
-              f"OT={class_tags['OpeningTrend']}")
-        print(f"[C] prev_ohlc: {_fmt(class_tags['prev_ohlc'])}")
+        prev_ohlc = C.prev_trading_day_ohlc(tm5, day_ts)
+        print(f"[C] prev_trading_day_ohlc -> {prev_ohlc}")
+        pdc = C.compute_prevdaycontext_robust(prev_ohlc)
+        ol = C.compute_openlocation_from_df(tm5, day_ts, prev_ohlc)
+        ot = C.compute_openingtrend_robust(tm5, day_ts)
+        print(f"[C] PDC={pdc}, OL={ol}, OT={ot}")
     except Exception as e:
         print(f"[C] ERROR computing classifier tags: {e}")
-        class_tags = None
 
-    # ---------- Planner output ----------
+    # --- MASTER row for this date ---
+    from probedge.storage.resolver import locate_for_read as _loc_master
+    import pandas as _pd
+
+    p_master = _loc_master("masters", sym)
+    master_row = None
+    print("\n=== MASTER row ===")
+    if not p_master.exists():
+        print(f"[MASTER] file not found for {sym}: {p_master}")
+    else:
+        m = _pd.read_csv(p_master)
+        if "Date" not in m.columns:
+            print("[MASTER] no Date column; cannot match day")
+        else:
+            m["Date"] = _pd.to_datetime(m["Date"], errors="coerce").dt.date
+            mm = m[m["Date"] == day_date]
+            if mm.empty:
+                print(f"[MASTER] no row for {day_date}")
+            else:
+                master_row = mm.iloc[0].to_dict()
+                print(f"[MASTER] {master_row}")
+
+    # --- Planner view ---
     print("\n=== Planner (build_parity_plan) ===")
     try:
-        plan = build_parity_plan(sym, day_str)
-        print(f"[PLAN] skip={plan.get('skip')} pick={plan.get('pick')} "
-              f"conf={plan.get('confidence%')}% reason={plan.get('reason')}")
+        plan = build_parity_plan(sym, day_str=day_str)
+        skip = plan.get("skip")
+        print(
+            f"[PLAN] skip={skip} pick={plan.get('pick')} "
+            f"conf={plan.get('confidence%')}% reason={plan.get('reason')}"
+        )
         print(f"[PLAN] tags={plan.get('tags')}")
-        print(f"[PLAN] entry={plan.get('entry')} stop={plan.get('stop')} "
-              f"t1={plan.get('target1')} t2={plan.get('target2')} qty={plan.get('qty')}")
+        print(
+            f"[PLAN] entry={plan.get('entry')} stop={plan.get('stop')} "
+            f"t1={plan.get('target1')} t2={plan.get('target2')} qty={plan.get('qty')}"
+        )
         print(f"[PLAN] per_trade_risk_rs_used={plan.get('per_trade_risk_rs_used')}")
     except Exception as e:
-        print(f"[PLAN] ERROR computing plan: {e}")
-        plan = None
+        print(f"[PLAN] ERROR building plan: {e}")
 
     print("\n=== SUMMARY ===")
     print("Compare:")
-    print(" - MASTER tags vs classifier tags vs plan['tags']")
-    print(" - ORB window vs what you expect for OT")
-    print(" - prev_ohlc vs what you expect for PDC/OL")
-    print("If MASTER != classifier != plan, we know exactly which link is broken.")
+    print(" - PREV-day OHLC vs what you expect from chart")
+    print(" - Classifier tags (C.*) vs MASTER OpeningTrend/OpenLocation/PrevDayContext")
+    print(" - MASTER tags vs plan['tags']")
+    print("If PREV-day OHLC itself looks wrong, this is a data issue;")
+    print("if OHLC is correct but tags feel wrong, it's a classifier-rule issue.")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--symbol", required=True, help="e.g. SBIN")
+    ap.add_argument("--day", required=True, help="YYYY-MM-DD")
+    args = ap.parse_args()
+    debug_symbol_day(args.symbol, args.day)
 
 
 if __name__ == "__main__":
