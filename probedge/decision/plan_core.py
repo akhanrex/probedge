@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, time as dtime
 from typing import Any, Dict, List, Optional
 
-
 import numpy as np
 import pandas as pd
 
@@ -15,19 +14,15 @@ from ..infra.loaders import read_tm5_csv
 
 logger = get_logger(__name__)
 
-from probedge.decision.classifiers_robust import (
-    prev_trading_day_ohlc,
-    compute_openingtrend_robust,
-    compute_openlocation_from_df,
-    compute_prevdaycontext_robust,
-)
+# NOTE: we only need prev_trading_day_ohlc from the robust module now.
+from probedge.decision.classifiers_robust import prev_trading_day_ohlc
 from probedge.decision.freq_pick import freq_pick
 
 
 def _is_close(a: float, b: float, entry_px: float, orb_rng: float) -> bool:
     """Colab parity: CLOSE_PCT + CLOSE_FR_ORB band."""
-    thr = np.inf
-    parts = []
+    thr = float("inf")
+    parts: List[float] = []
     if np.isfinite(entry_px) and entry_px > 0:
         parts.append(entry_px * CLOSE_PCT)
     if np.isfinite(orb_rng):
@@ -46,6 +41,7 @@ def _effective_daily_risk_rs() -> int:
     if getattr(SETTINGS, "mode", "paper") == "test":
         return 1000
     return int(getattr(SETTINGS, "risk_budget_rs", 10000))
+
 
 def _load_tm5_flex(path: str) -> pd.DataFrame:
     """
@@ -99,7 +95,6 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "parity_mode": True,
         }
 
-
     if tm5.empty:
         return {
             "symbol": sym_upper,
@@ -147,27 +142,14 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "parity_mode": True,
         }
 
-    # ---------- Prev-day OHLC + tags ----------
-    prev_ohlc = prev_trading_day_ohlc(tm5, day_norm)
-    ot = compute_openingtrend_robust(df_day)
-    if prev_ohlc:
-        # Use the same signatures as ops/rebuild_master_recent.py (classifiers)
-        ol = compute_openlocation_from_df(df_day, prev_ohlc)
-        pdc = compute_prevdaycontext_robust(prev_ohlc)
-    else:
-        ol = ""
-        pdc = ""
-
-
-    tags = {
-        "OpeningTrend": ot,
-        "OpenLocation": ol,
-        "PrevDayContext": pdc,
+    # ---------- Default tags (will be overridden from MASTER when possible) ----------
+    tags: Dict[str, str] = {
+        "OpeningTrend": "",
+        "OpenLocation": "",
+        "PrevDayContext": "",
     }
 
-
-
-    # ---------- Load master for freq pick ----------
+    # ---------- Load master for freq pick & tags ----------
     p_master = locate_for_read("masters", sym_upper)
     if not p_master.exists():
         return {
@@ -195,9 +177,30 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "parity_mode": True,
         }
 
+    # Try to override tags straight from MASTER for this day (single source of truth).
+    try:
+        if "Date" in master.columns:
+            mdates = pd.to_datetime(master["Date"], errors="coerce").dt.normalize()
+            row_today = master.loc[mdates == day_norm]
+            if not row_today.empty:
+                r = row_today.iloc[0]
+                tags = {
+                    "OpeningTrend": str(r.get("OpeningTrend", "") or ""),
+                    "OpenLocation": str(r.get("OpenLocation", "") or ""),
+                    "PrevDayContext": str(r.get("PrevDayContext", "") or ""),
+                }
+    except Exception as e:
+        logger.warning(
+            "[build_parity_plan] failed to override tags from MASTER for %s %s: %s",
+            sym_upper,
+            day_norm.date(),
+            e,
+        )
+
+    # ---------- Freq pick using MASTER ----------
     pick, conf_pct, reason, level, stats = freq_pick(day_norm, master)
 
-    # Abstain → no trade, but still return tags + reason
+    # If MASTER says ABSTAIN, just return tags + reason (no trade).
     if pick == "ABSTAIN":
         return {
             "symbol": sym_upper,
@@ -212,8 +215,33 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
 
     long_side = (pick == "BULL")
 
+    # Use OpeningTrend from MASTER for SL logic if available; fall back to TR
+    ot = tags.get("OpeningTrend") or "TR"
+
+    # ---------- Prev-day OHLC (for SL logic) ----------
+    prev_ohlc = None
+    try:
+        prev_ohlc = prev_trading_day_ohlc(tm5, day_norm)
+    except Exception as e:
+        logger.warning(
+            "[build_parity_plan] prev_trading_day_ohlc failed for %s %s: %s",
+            sym_upper,
+            day_norm.date(),
+            e,
+        )
+
+    prev_h = float(prev_ohlc["high"]) if prev_ohlc and "high" in prev_ohlc else np.nan
+    prev_l = float(prev_ohlc["low"]) if prev_ohlc and "low" in prev_ohlc else np.nan
+
     # ---------- 09:40→15:05 window (entry) ----------
-    w09 = df_day[(df_day["_mins"] >= 9 * 60 + 40) & (df_day["_mins"] <= 15 * 60 + 5)]
+    if "_mins" in df_day.columns:
+        w09 = df_day[(df_day["_mins"] >= 9 * 60 + 40) & (df_day["_mins"] <= 15 * 60 + 5)]
+    else:
+        # derive minutes-from-midnight if needed
+        dt = pd.to_datetime(df_day["DateTime"])
+        mins = dt.dt.hour * 60 + dt.dt.minute
+        w09 = df_day[(mins >= 9 * 60 + 40) & (mins <= 15 * 60 + 5)]
+
     if w09.empty:
         return {
             "symbol": sym_upper,
@@ -229,7 +257,15 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
     entry_px = float(w09["Open"].iloc[0])
 
     # ---------- ORB window (09:15→09:35) ----------
-    w_orb = df_day[(df_day["_mins"] >= 9 * 60 + 15) & (df_day["_mins"] <= 9 * 60 + 35)]
+    if "_mins" in df_day.columns:
+        w_orb = df_day[
+            (df_day["_mins"] >= 9 * 60 + 15) & (df_day["_mins"] <= 9 * 60 + 35)
+        ]
+    else:
+        dt = pd.to_datetime(df_day["DateTime"])
+        mins = dt.dt.hour * 60 + dt.dt.minute
+        w_orb = df_day[(mins >= 9 * 60 + 15) & (mins <= 9 * 60 + 35)]
+
     if w_orb.empty:
         return {
             "symbol": sym_upper,
@@ -246,11 +282,9 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
     orb_l = float(w_orb["Low"].min())
     rng = max(0.0, orb_h - orb_l)
     dbl_h, dbl_l = (orb_h + rng, orb_l - rng)
-    prev_h = float(prev_ohlc["high"]) if prev_ohlc else np.nan
-    prev_l = float(prev_ohlc["low"]) if prev_ohlc else np.nan
     orb_rng = (orb_h - orb_l) if (np.isfinite(orb_h) and np.isfinite(orb_l)) else np.nan
 
-    # ---------- SL logic (Colab rules) ----------
+    # ---------- SL logic (Colab rules, now using MASTER OT tag) ----------
     if ot == "BULL" and pick == "BULL":
         stop = (
             prev_l
