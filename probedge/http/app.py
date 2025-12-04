@@ -2,12 +2,13 @@
 
 from pathlib import Path
 import json
+from datetime import datetime
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
-from datetime import datetime
 from fastapi.staticfiles import StaticFiles
 
-from probedge.http import api_state   # import the router we just created
+from probedge.http import api_state   # FastAPI router for /api/state etc.
 
 app = FastAPI()
 STATE_PATH = Path("data/state/live_state.json")
@@ -17,8 +18,9 @@ app.include_router(api_state.router)
 
 # 2) Static + live.html
 
-# Assume your repo structure is:
-#   /probedge-main
+# Repo structure:
+#   /probedge
+#     /probedge/http/app.py  (this file)
 #     /webui
 #       live.html
 #       /js/live.js
@@ -27,12 +29,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WEBUI_DIR = REPO_ROOT / "webui"
 
 # Serve JS/CSS under /static
-app.mount("/static", StaticFiles(directory=WEBUI_DIR), name="static")
+app.mount(
+    "/static",
+    StaticFiles(directory=str(WEBUI_DIR)),
+    name="static"
+)
 
 # Serve the live grid HTML at "/"
 @app.get("/")
 def live_root():
     return FileResponse(WEBUI_DIR / "live.html")
+
+# OPTIONAL but useful: also serve /live.html so any old bookmark doesn’t 404
+@app.get("/live.html")
+def live_alias():
+    return FileResponse(WEBUI_DIR / "live.html")
+
 
 @app.get("/api/health")
 def api_health():
@@ -79,4 +91,3 @@ def api_state_raw():
 
     # Old-style state or anything else -> just return as-is
     return data
-
