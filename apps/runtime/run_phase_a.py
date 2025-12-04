@@ -1,34 +1,38 @@
 # apps/runtime/run_phase_a.py
 #
-# Phase A runner (paper-only):
+# Phase A runner (paper-only, no real orders):
 # - Starts live 5-minute aggregator (agg5) which:
 #     * consumes Kite ticks
 #     * appends to data/intraday/{sym}_5minute.csv
 #     * updates data/state/live_state.json with latest quotes
 # - Arms the full 10-symbol portfolio at ~09:40 using the same logic
-#   as GET /api/state and POST /api/plan/arm_day.
+#   as the API state/plan endpoints.
+# - After market close (~15:10 IST), automatically:
+#     * runs paper execution from journal (simulated fills)
+#     * rolls fills into daily P&L summary.
 #
-# This script does NOT place any real orders. It is purely for:
-#   - live data plumbing
-#   - automatic daily planning
-#
-# Execution (paper trades) and risk engine will be wired on top of this.
+# This script does NOT talk to the live broker OMS. It is the
+# "everything in paper" day runner: data + plan + paper exec + P&L.
 
 from __future__ import annotations
 
 import argparse
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, time as dtime
 from typing import Optional, Sequence
 
 from probedge.infra.settings import SETTINGS
 from probedge.infra.logger import get_logger
 from probedge.realtime.agg5 import run_agg
 from apps.runtime.daily_timeline import arm_portfolio_for_day
+from apps.runtime.paper_exec_from_journal import run_paper_exec_for_day
+from apps.runtime.fills_to_daily import main as fills_to_daily_main
 
 log = get_logger(__name__)
 
+
+# -------- helpers --------
 
 def _start_agg_thread(symbols: Sequence[str]) -> threading.Thread:
     """Start the synchronous agg5 loop in a daemon thread."""
@@ -56,15 +60,60 @@ def _start_planner_thread(day: str, risk_rs: Optional[int], wait_for_time: bool)
     return t
 
 
+def _wait_until_today(target: dtime) -> None:
+    """Block until today's wall-clock >= target (IST local time)."""
+    while True:
+        now = datetime.now()
+        if now.time() >= target:
+            return
+        # sleep in small-ish chunks
+        remaining = (
+            datetime.combine(now.date(), target) - now
+        ).total_seconds()
+        sleep_for = max(5.0, min(remaining, 60.0))
+        time.sleep(sleep_for)
+
+
+def _start_eod_paper_thread(day: str, wait_for_close: bool) -> threading.Thread:
+    """Start EOD paper execution + daily P&L in a daemon thread."""
+    def _run():
+        try:
+            if wait_for_close:
+                # Around 15:10 IST, after the regular session candles are done.
+                target = dtime(hour=15, minute=10)
+                log.info("EOD thread waiting until %s for day=%s", target, day)
+                _wait_until_today(target)
+            else:
+                log.info("EOD thread running immediately for day=%s (--eod-no-wait)", day)
+
+            log.info("EOD paper exec starting for day=%s", day)
+            run_paper_exec_for_day(day)
+
+            log.info("EOD daily P&L aggregation starting")
+            fills_to_daily_main()
+            log.info("EOD paper exec + daily P&L completed for day=%s", day)
+        except Exception:
+            log.exception("EOD paper exec pipeline failed")
+
+    t = threading.Thread(target=_run, name="eod-paper-thread", daemon=True)
+    t.start()
+    return t
+
+
+# -------- entrypoint --------
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Phase A runner: live agg5 + auto 09:40 portfolio planning (paper-only).",
+        description=(
+            "Phase A runner: live agg5 + auto 09:40 portfolio planning + "
+            "EOD paper execution and daily P&L (NO real orders)."
+        ),
     )
     parser.add_argument(
         "--day",
         type=str,
         default=None,
-        help="Trading day in YYYY-MM-DD (default: today). Used for planning.",
+        help="Trading day in YYYY-MM-DD (default: today). Used for planning and paper exec.",
     )
     parser.add_argument(
         "--risk",
@@ -73,9 +122,14 @@ def main() -> None:
         help="Override daily risk in rupees (default: SETTINGS / _effective_daily_risk_rs).",
     )
     parser.add_argument(
-        "--no-wait",
+        "--no-wait-plan",
         action="store_true",
         help="If set, do NOT wait until 09:40; build plan immediately.",
+    )
+    parser.add_argument(
+        "--eod-no-wait",
+        action="store_true",
+        help="If set, do NOT wait until 15:10; run paper exec + daily P&L immediately.",
     )
     args = parser.parse_args()
 
@@ -90,7 +144,7 @@ def main() -> None:
     log.info("agg5 thread started: %s", agg_thread.name)
 
     # 2) Start portfolio planner (09:40 lock by default)
-    wait_for_time = not args.no_wait
+    wait_for_time = not args.no_wait_plan
     planner_thread = _start_planner_thread(day=day, risk_rs=risk_rs, wait_for_time=wait_for_time)
     log.info(
         "planner thread started: %s (day=%s, risk_rs=%s, wait_for_time=%s)",
@@ -100,7 +154,16 @@ def main() -> None:
         wait_for_time,
     )
 
-    # 3) Main thread just stays alive until Ctrl+C
+    # 3) Start EOD paper execution + daily P&L (15:10 by default)
+    eod_thread = _start_eod_paper_thread(day=day, wait_for_close=not args.eod_no_wait)
+    log.info(
+        "EOD paper thread started: %s (day=%s, wait_for_close=%s)",
+        eod_thread.name,
+        day,
+        not args.eod_no_wait,
+    )
+
+    # 4) Main thread just stays alive until Ctrl+C
     try:
         while True:
             time.sleep(30)
