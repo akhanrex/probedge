@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from probedge.infra.settings import SETTINGS
 
-ALIASES = {"TATAMOTORS": "TMPV"}
+ALIASES = {}
 
 def _resolve(sym: str) -> str:
     return ALIASES.get(sym.upper(), sym.upper())
