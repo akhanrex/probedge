@@ -50,6 +50,9 @@ app.mount(
     name="static",
 )
 
+# COMPAT: old UI expects /webui-static/css/... and /webui-static/js/...
+app.mount("/webui-static", StaticFiles(directory=WEBUI_DIR), name="webui-static")
+
 # Serve the live grid HTML at "/"
 @app.get("/")
 def live_root():
