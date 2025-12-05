@@ -188,25 +188,25 @@ function mergeState(rawState, planState) {
     row.tags = Object.assign({}, row.tags || {}, normTags);
   }
 
-  // Merge in live positions (PENDING / OPEN / CLOSED)
-  for (const [sym, pos] of Object.entries(positionsMap)) {
-    if (!merged[sym]) {
-      merged[sym] = {
-        symbol: sym,
-        ltp: null,
-        ohlc: null,
-        volume: null,
-        tags: {},
-        pick: null,
-        confidence: null,
-        qty: null,
-        entry: null,
-        stop: null,
-        tp1: null,
-        tp2: null,
-        status: null,
-      };
-    }
+    // Merge in live positions (PENDING / OPEN / CLOSED)
+    for (const [sym, pos] of Object.entries(positionsMap)) {
+      if (!merged[sym]) {
+        merged[sym] = {
+          symbol: sym,
+          ltp: null,
+          ohlc: null,
+          volume: null,
+          tags: {},
+          pick: null,
+          confidence: null,
+          qty: null,
+          entry: null,
+          stop: null,
+          tp1: null,
+          tp2: null,
+          status: null,
+        };
+      }
 
     const row = merged[sym];
     row.position = pos;
