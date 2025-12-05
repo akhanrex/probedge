@@ -116,9 +116,14 @@ def _get_ltp(symbol: str, state: Dict[str, Any]) -> float | None:
 
 
 def _update_position_pnl(pos: Dict[str, Any], ltp: float) -> None:
+    # Only OPEN positions have live open P&L; everything else is 0.
+    if pos.get("status") != "OPEN":
+        pos["open_pnl_rs"] = 0.0
+        return
+
     side: SideT = pos["side"]
     entry = float(pos["entry_price"])
-    qty = int(pos["qty"] or 0)
+    qty = int(pos.get("qty") or 0)
 
     if qty <= 0:
         pos["open_pnl_rs"] = 0.0
