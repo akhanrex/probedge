@@ -85,11 +85,18 @@ function normalizeTagsFromPlan(plan) {
 
 function mergeState(rawState, planState) {
   const symbolsRaw = (rawState && rawState.symbols) || {};
-  const plansList = (planState && planState.plans) || [];
+
+  // NEW: support nested portfolio_plan as the canonical place for plan info
+  const portfolioPlan =
+    (planState && planState.portfolio_plan) || planState || {};
+
+  const plansList = Array.isArray(portfolioPlan.plans)
+    ? portfolioPlan.plans
+    : [];
 
   const merged = {};
 
-  // New: live intraday fields
+  // New: live intraday fields (positions / pnl / risk / batch_agent)
   const positionsMap =
     (planState && planState.positions) ||
     (rawState && rawState.positions) ||
@@ -211,21 +218,30 @@ function mergeState(rawState, planState) {
 
   const meta = {
     mode: planState?.mode || rawState?.mode || "unknown",
-    // playback/live day from sim_day is authoritative
-    date: rawState?.sim_day || planState?.date || null,
+    // playback/live day from sim_day is authoritative; otherwise fall back to portfolio plan’s date
+    date:
+      rawState?.sim_day ||
+      portfolioPlan.date ||
+      planState?.date ||
+      null,
     clock: rawState?.sim_clock || null,
     sim: rawState?.sim ?? null,
-    daily_risk_rs: planState?.daily_risk_rs ?? rawState?.daily_risk_rs ?? null,
-    risk_per_trade_rs: planState?.risk_per_trade_rs ?? null,
-    total_planned_risk_rs: planState?.total_planned_risk_rs ?? null,
-    active_trades: planState?.active_trades ?? null,
 
-    // New: live intraday metrics
+    // Plan aggregates from portfolioPlan, with fallback to flattened/raw if ever needed
+    daily_risk_rs:
+      portfolioPlan.daily_risk_rs ??
+      planState?.daily_risk_rs ??
+      rawState?.daily_risk_rs ??
+      null,
+    risk_per_trade_rs: portfolioPlan.risk_per_trade_rs ?? null,
+    total_planned_risk_rs: portfolioPlan.total_planned_risk_rs ?? null,
+    active_trades: portfolioPlan.active_trades ?? null,
+
+    // Live intraday metrics
     pnl: pnlObj,
     risk_state: riskObj,
     batch_agent: batchAgentObj,
   };
-
 
   return { meta, symbols: merged };
 }
