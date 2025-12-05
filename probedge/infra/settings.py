@@ -49,7 +49,10 @@ class _Env(BaseSettings):
     # Kite keys (for later phases)
     KITE_API_KEY: str = Field(default="")
     KITE_API_SECRET: str = Field(default="")
+    KITE_REDIRECT_URL: str = Field(default="")
+    KITE_SESSION_FILE: str = Field(default="data/state/kite_session.json")
     KITE_ACCESS_TOKEN: str = Field(default="")
+
 
 class Settings(BaseModel):
     # Core
@@ -131,6 +134,15 @@ def load_settings() -> Settings:
 
         # Ops
         allowed_origins=_split_origins(env.ALLOWED_ORIGINS),
+
+        # Kite auth
+        kite_api_key=env.KITE_API_KEY or None,
+        kite_api_secret=env.KITE_API_SECRET or None,
+        kite_redirect_url=env.KITE_REDIRECT_URL or None,
+        kite_session_file=(
+            Path(env.KITE_SESSION_FILE).resolve()
+            if env.KITE_SESSION_FILE else None
+        ),
     )
 
 # Singleton
