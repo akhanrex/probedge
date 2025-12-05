@@ -89,6 +89,28 @@ function mergeState(rawState, planState) {
 
   const merged = {};
 
+  // New: live intraday fields
+  const positionsMap =
+    (planState && planState.positions) ||
+    (rawState && rawState.positions) ||
+    {};
+
+  const pnlObj =
+    (planState && planState.pnl) ||
+    (rawState && rawState.pnl) ||
+    null;
+
+  const riskObj =
+    (planState && planState.risk) ||
+    (rawState && rawState.risk) ||
+    null;
+
+  const batchAgentObj =
+    (planState && planState.batch_agent) ||
+    (rawState && rawState.batch_agent) ||
+    null;
+
+
   // Base from quotes
   for (const [sym, q] of Object.entries(symbolsRaw)) {
     merged[sym] = {
@@ -159,17 +181,51 @@ function mergeState(rawState, planState) {
     row.tags = Object.assign({}, row.tags || {}, normTags);
   }
 
+    // Merge in live positions (PENDING / OPEN / CLOSED)
+  for (const [sym, pos] of Object.entries(positionsMap)) {
+    if (!merged[sym]) {
+      merged[sym] = {
+        symbol: sym,
+        ltp: null,
+        ohlc: null,
+        volume: null,
+        tags: {},
+        pick: null,
+        confidence: null,
+        qty: null,
+        entry: null,
+        stop: null,
+        tp1: null,
+        tp2: null,
+        status: null,
+      };
+    }
+    const row = merged[sym];
+    row.position = pos;
+    row.status = pos.status ?? row.status;
+    row.open_pnl_rs =
+      pos.open_pnl_rs != null ? Number(pos.open_pnl_rs) : row.open_pnl_rs;
+    row.exit_reason = pos.exit_reason ?? row.exit_reason;
+  }
+
+
   const meta = {
     mode: planState?.mode || rawState?.mode || "unknown",
     // playback/live day from sim_day is authoritative
     date: rawState?.sim_day || planState?.date || null,
     clock: rawState?.sim_clock || null,
     sim: rawState?.sim ?? null,
-    daily_risk_rs: planState?.daily_risk_rs ?? null,
+    daily_risk_rs: planState?.daily_risk_rs ?? rawState?.daily_risk_rs ?? null,
     risk_per_trade_rs: planState?.risk_per_trade_rs ?? null,
     total_planned_risk_rs: planState?.total_planned_risk_rs ?? null,
     active_trades: planState?.active_trades ?? null,
+
+    // New: live intraday metrics
+    pnl: pnlObj,
+    risk_state: riskObj,
+    batch_agent: batchAgentObj,
   };
+
 
   return { meta, symbols: merged };
 }
@@ -317,7 +373,7 @@ function gateTagsAndPlan(row, meta) {
     };
   }
 
-  // PHASE 4: >= 09:40:00 => full tags + plan visible
+  // PHASE 4: >= 09:40:00 => full tags + plan + live status visible
   pdc = rawPdc;
   ol = rawOl;
   ot = rawOt;
@@ -329,7 +385,31 @@ function gateTagsAndPlan(row, meta) {
   stop = row.stop;
   tp1 = row.tp1;
   tp2 = row.tp2;
-  status = row.status;
+
+  // Base status from plan (if any)
+  let statusText = row.status || null;
+
+  // If we have a live position, override status from that
+  const pos = row.position || null;
+  if (pos) {
+    const st = pos.status;
+    if (st === "PENDING") {
+      statusText = "PENDING";
+    } else if (st === "OPEN") {
+      const op = Number(pos.open_pnl_rs ?? 0);
+      if (Number.isFinite(op) && op !== 0) {
+        const sign = op > 0 ? "+" : op < 0 ? "-" : "";
+        statusText = `OPEN (${sign}${Math.round(op)})`;
+      } else {
+        statusText = "OPEN";
+      }
+    } else if (st === "CLOSED") {
+      const reason = pos.exit_reason || "";
+      statusText = `CLOSED${reason ? " (" + reason + ")" : ""}`;
+    }
+  }
+
+  status = statusText;
 
   return {
     pdc,
@@ -359,6 +439,14 @@ function renderSummary(meta) {
   const updatedEl = document.getElementById("summary-last-update");
   const footerMeta = document.getElementById("footer-meta");
 
+  // New optional elements (add these IDs in live.html if not present)
+  const pnlDayEl = document.getElementById("summary-pnl-day");
+  const pnlOpenEl = document.getElementById("summary-pnl-open");
+  const pnlRealEl = document.getElementById("summary-pnl-realized");
+  const riskStatusEl = document.getElementById("summary-risk-status");
+  const batchAgentEl = document.getElementById("summary-batch-agent");
+
+
   const mode = meta.mode || "unknown";
   modeEl.textContent = mode.toUpperCase();
   modeEl.className = "mode-badge " + classifyMode(mode);
@@ -387,6 +475,38 @@ function renderSummary(meta) {
 
   updatedEl.textContent = meta.clock || "—";
   footerMeta.textContent = meta.sim === false ? "LIVE feed" : "SIM feed";
+    // --- New: live P&L + risk + batch_agent status (if HTML provides spans) ---
+  const pnl = meta.pnl || null;
+  if (pnl) {
+    if (pnlDayEl) pnlDayEl.textContent = fmtRs(pnl.day_total_rs);
+    if (pnlOpenEl) pnlOpenEl.textContent = fmtRs(pnl.open_rs);
+    if (pnlRealEl) pnlRealEl.textContent = fmtRs(pnl.realized_rs);
+  } else {
+    if (pnlDayEl) pnlDayEl.textContent = "—";
+    if (pnlOpenEl) pnlOpenEl.textContent = "—";
+    if (pnlRealEl) pnlRealEl.textContent = "—";
+  }
+
+  const risk = meta.risk_state || null;
+  if (riskStatusEl) {
+    if (!risk) {
+      riskStatusEl.textContent = "—";
+    } else {
+      const rs = (risk.status || "UNKNOWN").toUpperCase();
+      riskStatusEl.textContent = rs;
+    }
+  }
+
+  const ba = meta.batch_agent || null;
+  if (batchAgentEl) {
+    if (!ba || !ba.last_heartbeat_ts) {
+      batchAgentEl.textContent = "WARN – batch_agent has never reported";
+    } else {
+      const s = (ba.status || "UNKNOWN").toUpperCase();
+      const ts = ba.last_heartbeat_ts;
+      batchAgentEl.textContent = `${s} – batch_agent ${ts}`;
+    }
+  }
 }
 
 
