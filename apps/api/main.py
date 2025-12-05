@@ -53,8 +53,9 @@ app.mount("/webui-static", StaticFiles(directory=webui_dir), name="webui-static"
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Default entry – go straight to the live terminal."""
-    return FileResponse(webui_dir / "live.html")
+    """Default entry – auth-aware login page."""
+    return FileResponse(webui_dir / "login.html")
+
 
 
 @app.get("/live", include_in_schema=False)
