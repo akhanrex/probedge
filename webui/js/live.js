@@ -1,4 +1,4 @@
-// webui/js/live.js
+for (const [sym, pos]// webui/js/live.js
 // Live terminal frontend for Probedge, with timeline-aware display.
 //
 // Backend facts:
@@ -188,7 +188,7 @@ function mergeState(rawState, planState) {
     row.tags = Object.assign({}, row.tags || {}, normTags);
   }
 
-    // Merge in live positions (PENDING / OPEN / CLOSED)
+  // Merge in live positions (PENDING / OPEN / CLOSED)
   for (const [sym, pos] of Object.entries(positionsMap)) {
     if (!merged[sym]) {
       merged[sym] = {
@@ -207,12 +207,23 @@ function mergeState(rawState, planState) {
         status: null,
       };
     }
+
     const row = merged[sym];
     row.position = pos;
     row.status = pos.status ?? row.status;
-    row.open_pnl_rs =
-      pos.open_pnl_rs != null ? Number(pos.open_pnl_rs) : row.open_pnl_rs;
+
+    // live P&L components from backend
+    const openPnl =
+      pos.open_pnl_rs != null ? Number(pos.open_pnl_rs) : 0;
+    const realizedPnl =
+      pos.realized_pnl_rs != null ? Number(pos.realized_pnl_rs) : 0;
+
+    row.open_pnl_rs = openPnl;
+    row.realized_pnl_rs = realizedPnl;
     row.exit_reason = pos.exit_reason ?? row.exit_reason;
+
+    // Aggregated "today P&L" for the grid
+    row.pnl_today = openPnl + realizedPnl;
   }
 
 
@@ -641,23 +652,32 @@ function renderGrid(mergedState) {
     const tdEntry = document.createElement("td");
     tdEntry.textContent = fmtNum(entry, 2);
     tdEntry.className = "cell-number";
-
+  
     const tdSl = document.createElement("td");
     tdSl.textContent = fmtNum(stop, 2);
     tdSl.className = "cell-number";
-
+  
     const tdT1 = document.createElement("td");
     tdT1.textContent = fmtNum(tp1, 2);
     tdT1.className = "cell-number";
-
+  
     const tdT2 = document.createElement("td");
     tdT2.textContent = fmtNum(tp2, 2);
     tdT2.className = "cell-number";
-
+  
+    // P&L (today)
+    const tdPnl = document.createElement("td");
+    const pnlToday = row.pnl_today != null ? Number(row.pnl_today) : 0;
+    tdPnl.textContent = pnlToday ? fmtRs(pnlToday) : "";
+    tdPnl.className =
+      "cell-number " +
+      (pnlToday > 0 ? "cell-pos" : pnlToday < 0 ? "cell-neg" : "");
+  
     // Status
     const tdStatus = document.createElement("td");
     tdStatus.textContent = safeText(status);
     tdStatus.className = "cell-status";
+
 
     tr.appendChild(tdSym);
     tr.appendChild(tdLtp);
@@ -672,7 +692,9 @@ function renderGrid(mergedState) {
     tr.appendChild(tdSl);
     tr.appendChild(tdT1);
     tr.appendChild(tdT2);
+    tr.appendChild(tdPnl);    // NEW
     tr.appendChild(tdStatus);
+
 
     tr.addEventListener("click", () => {
       selectedSymbol = sym;
