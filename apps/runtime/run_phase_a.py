@@ -31,6 +31,7 @@ from typing import Optional, Sequence
 from probedge.infra.settings import SETTINGS
 from probedge.infra.logger import get_logger
 from probedge.realtime.agg5 import run_agg
+from apps.runtime.intraday_paper import run_intraday_paper_loop
 from apps.runtime.daily_timeline import arm_portfolio_for_day
 from apps.runtime.paper_exec_from_journal import run_paper_exec_for_day
 from apps.runtime.fills_to_daily import main as fills_to_daily_main
@@ -103,6 +104,30 @@ def _start_eod_paper_thread(day: str, wait_for_close: bool) -> threading.Thread:
     t.start()
     return t
 
+def _start_intraday_paper_thread(
+    planner_thread: Optional[threading.Thread],
+) -> threading.Thread:
+    """
+    Start the intraday paper engine in a daemon thread.
+
+    It waits for planner_thread to finish (so portfolio_plan is present
+    in live_state.json), then runs run_intraday_paper_loop().
+    """
+    def _run():
+        try:
+            if planner_thread is not None:
+                log.info("intraday-paper: waiting for planner to finish...")
+                planner_thread.join()
+                log.info("intraday-paper: planner finished; starting loop")
+
+            run_intraday_paper_loop()
+            log.info("intraday-paper: loop finished")
+        except Exception:
+            log.exception("intraday paper loop crashed")
+
+    t = threading.Thread(target=_run, name="intraday-paper-thread", daemon=True)
+    t.start()
+    return t
 
 # -------- entrypoint --------
 
@@ -167,6 +192,19 @@ def main() -> None:
         wait_for_time,
     )
 
+    # 2.5) Start intraday paper engine (live intraday P&L + risk)
+    intraday_thread = None
+    # Only makes sense when we are behaving like a "real" day:
+    # - we are not doing instant EOD
+    # (we still allow --skip-agg; engine will just see no LTPs)
+    if not args.eod_no_wait:
+        intraday_thread = _start_intraday_paper_thread(planner_thread)
+        log.info(
+            "intraday paper thread started: %s (day=%s)",
+            intraday_thread.name if intraday_thread else None,
+            day,
+        )
+
     # 3) Start EOD paper execution + daily P&L
     eod_thread = _start_eod_paper_thread(day=day, wait_for_close=not args.eod_no_wait)
     log.info(
@@ -175,6 +213,7 @@ def main() -> None:
         day,
         not args.eod_no_wait,
     )
+
 
     # 4) Main thread just stays alive until Ctrl+C
     try:
