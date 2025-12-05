@@ -1,4 +1,4 @@
-for (const [sym, pos]// webui/js/live.js
+// webui/js/live.js
 // Live terminal frontend for Probedge, with timeline-aware display.
 //
 // Backend facts:
