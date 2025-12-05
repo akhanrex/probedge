@@ -14,8 +14,11 @@ from .routes.tm5 import router as tm5_router
 from .routes.matches import router as matches_router
 from .routes.plan import router as plan_router
 from .routes.state import router as state_router
+from apps.api.routes import auth as auth_routes
 
 app = FastAPI(title="Probedge API")
+
+
 
 # --- CORS ---
 origins = SETTINGS.allowed_origins or ["*"]
@@ -26,6 +29,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_routes.router)
 
 # --- Paths ---
 this_dir = Path(__file__).resolve().parent
