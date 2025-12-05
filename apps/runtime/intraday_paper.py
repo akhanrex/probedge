@@ -177,7 +177,6 @@ def _maybe_close_position(pos: Dict[str, Any], ltp: float) -> None:
     if exit_reason is None:
         return
 
-    # Close at current price
     entry = float(pos["entry_price"])
     qty = int(pos["qty"] or 0)
 
@@ -194,8 +193,7 @@ def _maybe_close_position(pos: Dict[str, Any], ltp: float) -> None:
     pos["exit_time"] = datetime.now().isoformat()
     pos["exit_reason"] = exit_reason
     pos["realized_pnl_rs"] = pnl
-    pos["open_pnl_rs"] = 0.0
-
+    pos["open_pnl_rs"] = 0.0  # important: no open P&L after close
 
 
 def _maybe_eod_close(pos: Dict[str, Any], ltp: float) -> None:
