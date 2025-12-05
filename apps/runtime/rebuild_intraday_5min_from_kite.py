@@ -45,46 +45,46 @@ def load_tokens():
     return {row["symbol"]: int(row["instrument_token"]) for _, row in df.iterrows()}
 
 
-def fetch_5min_from_kite(kite: KiteConnect, instrument_token: int, start: date, end: date) -> pd.DataFrame:
+def fetch_5min_from_kite(kite, instrument_token: int, start: date, end: date) -> pd.DataFrame:
     """
-    Fetch 5-minute candles between start and end (inclusive) using Kite historical_data.
-    We keep the **full trading session** for each day, starting from 09:15 onwards.
+    Fetch 5-minute candles between start and end (inclusive),
+    respecting Kite's 100-day limit.
     """
-    from_dt = datetime.combine(start, datetime.min.time())
-    to_dt   = datetime.combine(end,   datetime.max.time())
+    all_candles = []
+    cursor = start
 
-    candles = kite.historical_data(
-        instrument_token=instrument_token,
-        from_date=from_dt,
-        to_date=to_dt,
-        interval="5minute"
-    )
-    if not candles:
-        return pd.DataFrame()
+    while cursor <= end:
+        # Kite limit ~100 days; we use 99 to be safe
+        chunk_end = min(cursor + timedelta(days=99), end)
+        print(f"[intraday] fetching {instrument_token} {cursor} → {chunk_end}")
 
-    df = pd.DataFrame(candles)
+        candles = kite.historical_data(
+            instrument_token=instrument_token,
+            from_date=cursor,
+            to_date=chunk_end,
+            interval="5minute",
+        )
+        all_candles.extend(candles)
+
+        # Move to the next day after this chunk
+        cursor = chunk_end + timedelta(days=1)
+
+    if not all_candles:
+        print("[intraday] WARNING: no candles returned")
+        return pd.DataFrame(
+            columns=["date", "time", "open", "high", "low", "close", "volume"]
+        )
+
+    df = pd.DataFrame(all_candles)
+
+    # Kite returns a 'date' column with full timestamp
     df["date"] = pd.to_datetime(df["date"])
+    df["time"] = df["date"].dt.strftime("%H:%M:%S")
+    df["date"] = df["date"].dt.date
 
-    # Drop any pre-market junk before 09:15
-    df["time_str"] = df["date"].dt.strftime("%H:%M:%S")
-    df = df[df["time_str"] >= SESSION_START].copy()
+    df = df[["date", "time", "open", "high", "low", "close", "volume"]]
+    return df
 
-    df["trade_date"] = df["date"].dt.date
-    df["trade_time"] = df["date"].dt.strftime("%H:%M:%S")
-
-    df = df.sort_values("date")
-
-    df = df.rename(columns={
-        "trade_date": "date",
-        "trade_time": "time",
-        "open": "open",
-        "high": "high",
-        "low": "low",
-        "close": "close",
-        "volume": "volume",
-    })
-
-    return df[["date", "time", "open", "high", "low", "close", "volume"]]
 
 
 def refresh_symbol(sym: str, kite: KiteConnect, instrument_token: int, cutoff: date):
