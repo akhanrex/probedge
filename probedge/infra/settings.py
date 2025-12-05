@@ -74,6 +74,12 @@ class Settings(BaseModel):
     # Ops
     allowed_origins: List[str]
 
+    # Kite auth
+    kite_api_key: str | None = None
+    kite_api_secret: str | None = None
+    kite_redirect_url: str | None = None
+    kite_session_file: Path | None = None
+
     # Derived — read-only
     @property
     def risk_budget_rs(self) -> int:
