@@ -302,6 +302,12 @@ def run_intraday_paper_loop(poll_seconds: float = 2.0) -> None:
             "details": "intraday_paper+risk active",
         }
 
+        # Ensure top-level date / daily_risk_rs are present for UI and tools
+        if "date" not in state or state.get("date") is None:
+            state["date"] = date
+        if "daily_risk_rs" not in state or state.get("daily_risk_rs") is None:
+            state["daily_risk_rs"] = daily_risk_rs
+
         save_state(state)
 
         if _is_after_eod(now):
