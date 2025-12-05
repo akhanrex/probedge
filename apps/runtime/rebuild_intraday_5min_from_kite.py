@@ -94,14 +94,23 @@ def refresh_symbol(sym: str, kite: KiteConnect, instrument_token: int, cutoff: d
     # Load existing, if any
     if path.exists():
         cur = pd.read_csv(path)
-        # make sure date column is datetime for filtering
-        cur["date"] = pd.to_datetime(cur["date"]).dt.date
-        # keep history strictly before cutoff
-        keep = cur[cur["date"] < cutoff].copy()
-        print(f"[intraday] {sym}: keeping {len(keep)} old rows (< {cutoff})")
+        cols_lower = {c.lower(): c for c in cur.columns}
+
+        if "date" in cols_lower:
+            # Use whatever column is effectively "date" (case-insensitive)
+            date_col = cols_lower["date"]
+            cur["date"] = pd.to_datetime(cur[date_col]).dt.date
+            # keep history strictly before cutoff
+            keep = cur[cur["date"] < cutoff].copy()
+            print(f"[intraday] {sym}: keeping {len(keep)} old rows (< {cutoff})")
+        else:
+            # Old file is too messy – treat as if we had nothing
+            print(f"[intraday] {sym}: WARNING no 'date' column in {path}, starting fresh")
+            keep = pd.DataFrame(columns=["date", "time", "open", "high", "low", "close", "volume"])
     else:
         keep = pd.DataFrame(columns=["date", "time", "open", "high", "low", "close", "volume"])
         print(f"[intraday] {sym}: no existing file, starting fresh")
+
 
     today = date.today()
     print(f"[intraday] {sym}: fetching 5min from {cutoff} to {today}…")
