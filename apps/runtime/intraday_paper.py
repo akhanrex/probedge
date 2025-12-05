@@ -16,6 +16,21 @@ STATE_PATH = Path("data/state/live_state.json")
 StatusT = Literal["PENDING", "OPEN", "CLOSED"]
 SideT = Literal["LONG", "SHORT"]
 
+def _get_float(d: Dict[str, Any], keys, default=None):
+    """
+    Try multiple possible keys in order and return the first convertible float.
+    If nothing found, return default.
+    """
+    if isinstance(keys, str):
+        keys = [keys]
+    for k in keys:
+        if k in d and d[k] is not None:
+            try:
+                return float(d[k])
+            except (TypeError, ValueError):
+                continue
+    return default
+
 
 def load_state() -> Dict[str, Any]:
     if not STATE_PATH.exists():
@@ -51,10 +66,16 @@ def _build_initial_positions(portfolio_plan: Dict[str, Any]) -> Dict[str, Dict[s
             # ABSTAIN or zero-qty: no position to track
             continue
 
-        entry = float(plan["entry"])
-        stop = float(plan["stop"])
-        t1 = float(plan["t1"])
-        t2 = float(plan["t2"])
+        # Be defensive with key names
+        entry = _get_float(plan, ["entry", "Entry", "ENTRY"])
+        stop = _get_float(plan, ["stop", "sl", "SL", "Stop", "SL_price"])
+        t1 = _get_float(plan, ["t1", "T1", "target1", "Target1", "T1_price"], default=None)
+        t2 = _get_float(plan, ["t2", "T2", "target2", "Target2", "T2_price"], default=None)
+
+        if entry is None or stop is None:
+            # Without entry/stop, we cannot sensibly simulate this symbol
+            print(f"intraday_paper: skipping {symbol} – missing entry/stop in plan: keys={list(plan.keys())}")
+            continue
 
         positions[symbol] = {
             "symbol": symbol,
@@ -74,6 +95,7 @@ def _build_initial_positions(portfolio_plan: Dict[str, Any]) -> Dict[str, Dict[s
         }
 
     return positions
+
 
 
 def _get_ltp(symbol: str, state: Dict[str, Any]) -> float | None:
@@ -132,25 +154,24 @@ def _maybe_close_position(pos: Dict[str, Any], ltp: float) -> None:
 
     side: SideT = pos["side"]
     stop = float(pos["stop_price"])
-    t1 = float(pos["t1_price"])
-    t2 = float(pos["t2_price"])
+    t1 = pos.get("t1_price")
+    t2 = pos.get("t2_price")
 
-    # Decide priority: SL > T2 > T1 (we can tune later)
     exit_reason = None
 
     if side == "LONG":
         if ltp <= stop:
             exit_reason = "SL"
-        elif ltp >= t2:
+        elif t2 is not None and ltp >= float(t2):
             exit_reason = "T2"
-        elif ltp >= t1:
+        elif t1 is not None and ltp >= float(t1):
             exit_reason = "T1"
     else:  # SHORT
         if ltp >= stop:
             exit_reason = "SL"
-        elif ltp <= t2:
+        elif t2 is not None and ltp <= float(t2):
             exit_reason = "T2"
-        elif ltp <= t1:
+        elif t1 is not None and ltp <= float(t1):
             exit_reason = "T1"
 
     if exit_reason is None:
@@ -161,18 +182,12 @@ def _maybe_close_position(pos: Dict[str, Any], ltp: float) -> None:
     qty = int(pos["qty"] or 0)
 
     if qty <= 0:
-        pos["status"] = "CLOSED"
-        pos["exit_price"] = ltp
-        pos["exit_time"] = datetime.now().isoformat()
-        pos["exit_reason"] = exit_reason
-        pos["realized_pnl_rs"] = 0.0
-        pos["open_pnl_rs"] = 0.0
-        return
-
-    if side == "LONG":
-        pnl = (ltp - entry) * qty
+        pnl = 0.0
     else:
-        pnl = (entry - ltp) * qty
+        if side == "LONG":
+            pnl = (ltp - entry) * qty
+        else:
+            pnl = (entry - ltp) * qty
 
     pos["status"] = "CLOSED"
     pos["exit_price"] = ltp
@@ -180,6 +195,7 @@ def _maybe_close_position(pos: Dict[str, Any], ltp: float) -> None:
     pos["exit_reason"] = exit_reason
     pos["realized_pnl_rs"] = pnl
     pos["open_pnl_rs"] = 0.0
+
 
 
 def _maybe_eod_close(pos: Dict[str, Any], ltp: float) -> None:
