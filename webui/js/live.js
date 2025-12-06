@@ -852,11 +852,42 @@ function initRiskControl() {
   const input = document.getElementById("risk-input");
   const btn = document.getElementById("risk-apply-btn");
 
-  btn.addEventListener("click", (e) => {
+  if (!input || !btn) return;
+
+  // Enable the button now that backend exists
+  btn.disabled = false;
+  btn.title = "Apply daily risk to this stack";
+
+  btn.addEventListener("click", async (e) => {
     e.preventDefault();
-    alert("Risk change via UI will be wired in a later phase.");
+    const val = Number(input.value || 0);
+    if (!val || val < 1000) {
+      alert("Enter a valid daily risk (>= 1000).");
+      return;
+    }
+
+    try {
+      const resp = await fetch("/api/risk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ daily_risk_rs: val }),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`POST /api/risk → ${resp.status}: ${txt}`);
+      }
+      const data = await resp.json();
+      console.log("Risk updated:", data);
+
+      // Let the polling loop pick up the new daily_risk_rs via /api/state
+      alert(`Daily risk set to ₹${val.toLocaleString("en-IN")}`);
+    } catch (err) {
+      console.error("Risk update failed:", err);
+      alert("Failed to update risk. Check logs / console.");
+    }
   });
 }
+
 
 // ---------- Init ----------
 
