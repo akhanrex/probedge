@@ -52,6 +52,10 @@ app.mount("/static", StaticFiles(directory=api_static_dir), name="static")
 # New web UI assets (HTML/JS/CSS)
 app.mount("/webui-static", StaticFiles(directory=webui_dir), name="webui-static")
 
+# Legacy manual terminal expects assets under /webui/...
+app.mount("/webui", StaticFiles(directory=webui_dir), name="webui")
+
+
 
 # --- HTML entrypoints ---
 
@@ -75,11 +79,9 @@ async def live_page():
     return FileResponse(webui_dir / "live.html")
 
 @app.get("/manual", include_in_schema=False)
-async def manual_page():
-    """Manual backtest / tag terminal (old dashboard)."""
-    return FileResponse(manual_dir / "terminal.html")
-
-
+async def manual_terminal_page():
+    """Legacy manual frequency terminal UI."""
+    return FileResponse(webui_dir / "pages" / "terminal.html")
 
 @app.get("/debug", include_in_schema=False)
 async def debug_page():
