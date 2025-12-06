@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -16,7 +17,6 @@ from .routes.plan import router as plan_router
 from .routes.state import router as state_router
 from apps.api.routes import auth as auth_routes
 from .routes.risk import router as risk_router
-
 
 app = FastAPI(title="Probedge API")
 
@@ -41,6 +41,8 @@ api_static_dir = this_dir / "static"
 # repo root: .../probedge/probedge (the directory that contains `apps/`, `probedge/`, `webui/`)
 repo_root = this_dir.parents[1]
 webui_dir = repo_root / "webui"
+manual_dir = webui_dir / "manual"
+
 
 
 # --- Static mounts ---
@@ -59,11 +61,24 @@ async def root():
     return FileResponse(webui_dir / "login.html")
 
 
+@app.get("/login", include_in_schema=False)
+async def login_page():
+    """Explicit login URL alias (same as /)."""
+    return FileResponse(webui_dir / "login.html")
+
+
+
 
 @app.get("/live", include_in_schema=False)
 async def live_page():
     """Alias path for the live terminal UI."""
     return FileResponse(webui_dir / "live.html")
+
+@app.get("/manual", include_in_schema=False)
+async def manual_page():
+    """Manual backtest / tag terminal (old dashboard)."""
+    return FileResponse(manual_dir / "terminal.html")
+
 
 
 @app.get("/debug", include_in_schema=False)
