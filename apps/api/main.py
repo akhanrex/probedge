@@ -17,6 +17,10 @@ from .routes.plan import router as plan_router
 from .routes.state import router as state_router
 from apps.api.routes import auth as auth_routes
 from .routes.risk import router as risk_router
+from .routes.freq3 import router as freq3_router
+from .routes.superpath import router as superpath_router
+from .routes.journal import router as journal_router
+
 
 app = FastAPI(title="Probedge API")
 
@@ -98,4 +102,6 @@ app.include_router(matches_router)
 app.include_router(plan_router)
 app.include_router(state_router)
 app.include_router(risk_router)
-
+app.include_router(journal_router)
+app.include_router(superpath_router)
+app.include_router(freq3_router)
