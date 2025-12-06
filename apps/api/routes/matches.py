@@ -1,105 +1,66 @@
-from __future__ import annotations
-
 from fastapi import APIRouter, HTTPException, Query
-import pandas as pd
-
-from apps.storage.tm5 import read_master
+import pandas as pd, json
+from probedge.storage.resolver import locate_for_read
 from ._jsonsafe import json_safe_df
 
 router = APIRouter()
 
-
-def _norm(x: str) -> str:
-    return str(x or "").strip().upper()
-
+def _norm(x): 
+    return str(x).strip().upper()
 
 @router.get("/api/matches")
 def get_matches(
     symbol: str = Query(...),
     ot: str = Query(..., description="OpeningTrend: BULL|BEAR|TR"),
     ol: str = Query("", description="OpenLocation: OAR|OOH|OOL|OIM|OBR (optional)"),
-    pdc: str = Query("", description="PrevDayContext: BULL|BEAR|TR (optional)"),
+    pdc: str = Query("", description="PrevDayContext: BULL|BEAR|TR (optional)")
 ):
-    sym = _norm(symbol)
-    otN, olN, pdcN = _norm(ot), _norm(ol), _norm(pdc)
+    path = locate_for_read("masters", symbol)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"MASTER not found for {symbol}")
 
     try:
-        df = read_master(sym)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        m = pd.read_csv(path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read MASTER CSV: {e}")
 
-    if df is None or df.empty:
-        return {
-            "symbol": sym,
-            "ot": otN,
-            "ol": olN,
-            "pdc": pdcN,
-            "dates": [],
-            "rows": [],
-        }
+    # Normalise core tags for filtering
+    m["OpeningTrend"] = m["OpeningTrend"].astype(str).str.upper().str.strip()
+    if ol:
+        m = m[m["OpenLocation"].astype(str).str.upper().str.strip() == _norm(ol)]
+    if pdc:
+        m = m[m["PrevDayContext"].astype(str).str.upper().str.strip() == _norm(pdc)]
+    m = m[m["OpeningTrend"] == _norm(ot)]
+    lab = m["Result"].astype(str).str.upper().str.strip()
+    m = m[lab.isin(["BULL", "BEAR"])]
 
-    df = df.copy()
+    # Short aliases for the front-end
+    if "PrevDayContext" in m.columns:
+        m["PDC"] = m["PrevDayContext"]
+    if "OpenLocation" in m.columns:
+        m["OL"] = m["OpenLocation"]
+    if "OpeningTrend" in m.columns:
+        m["OT"] = m["OpeningTrend"]
+    if "FirstCandleType" in m.columns:
+        m["FCT"] = m["FirstCandleType"]
+    if "RangeStatus" in m.columns:
+        m["RS"] = m["RangeStatus"]
 
-    # Map robust tag columns to short names expected by the manual terminal.
-    if "OpeningTrend" in df.columns:
-        df["OT"] = df["OpeningTrend"]
-    if "OpenLocation" in df.columns:
-        df["OL"] = df["OpenLocation"]
-    if "PrevDayContext" in df.columns:
-        df["PDC"] = df["PrevDayContext"]
-    if "FirstCandleType" in df.columns:
-        df["FCT"] = df["FirstCandleType"]
-    if "RangeStatus" in df.columns:
-        df["RS"] = df["RangeStatus"]
-
-    # Normalize Date → "YYYY-MM-DD" strings
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
-
-    # Standardize tags
-    for col in ("OT", "OL", "PDC", "FCT", "RS", "Result"):
-        if col in df.columns:
-            df[col] = (
-                df[col]
-                .astype(str)
-                .str.strip()
-                .str.upper()
-                .replace({"NAN": ""})
-            )
-
-    # Apply filters
-    m = df.copy()
-    if otN:
-        m = m[m["OT"] == otN]
-    if olN:
-        m = m[m["OL"] == olN]
-    if pdcN:
-        m = m[m["PDC"] == pdcN]
-
-    if m.empty:
-        return {
-            "symbol": sym,
-            "ot": otN,
-            "ol": olN,
-            "pdc": pdcN,
-            "dates": [],
-            "rows": [],
-        }
-
-    # JSON-safe and limit to reasonable columns
+    # Sanitize + force JSON-safe roundtrip
     m = json_safe_df(m)
+    try:
+        rows = json.loads(m.to_json(orient="records"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Serialization error: {e}")
 
-    wanted = ["Date", "PDC", "OL", "OT", "FCT", "RS", "Result"]
-    present = [c for c in wanted if c in m.columns]
-    rows = m[present].to_dict(orient="records")
-
+    # Dates list (safe strings)
     dates = sorted({r.get("Date") for r in rows if r.get("Date")})
 
     return {
-        "symbol": sym,
-        "ot": otN,
-        "ol": olN,
-        "pdc": pdcN,
+        "symbol": symbol.upper(),
+        "ot": _norm(ot),
+        "ol": _norm(ol) if ol else "",
+        "pdc": _norm(pdc) if pdc else "",
         "dates": dates,
         "rows": rows,
     }
