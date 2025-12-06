@@ -52,19 +52,35 @@ def _effective_daily_risk_rs() -> int:
     """
     Decide which daily risk number to use.
 
-    - MODE = 'test' → use RISK_RS_TEST (usually 1,000).
-    - Otherwise → use risk_budget_rs (derived from RISK_RS_DEFAULT, usually 10,000).
+    Priority:
+    1) risk_override_rs from live_state.json (set via /api/risk), if present
+    2) SETTINGS.risk_budget_rs
+    3) fallback constants (risk_rs_test / RISK_RS_DEFAULT)
     """
+    # 1) State-level override
+    try:
+        state = aj.read(default={}) or {}
+    except Exception:
+        state = {}
+
+    override = state.get("risk_override_rs") or state.get("daily_risk_rs")
+    if override:
+        try:
+            return int(override)
+        except Exception:
+            pass
+
+    # 2) Mode-based + SETTINGS
     mode = (SETTINGS.mode or "").lower()
     if mode == "test":
         return int(getattr(SETTINGS, "risk_rs_test", 1000))
 
-    # Preferred config hook
     if getattr(SETTINGS, "risk_budget_rs", None):
         return int(SETTINGS.risk_budget_rs)
 
-    # Fallback
-    return int(getattr(SETTINGS, "risk_rs_default", 10000))
+    # 3) Hard fallback
+    return 10000
+
 
 
 def _is_active_plan(p: Dict[str, Any]) -> bool:
