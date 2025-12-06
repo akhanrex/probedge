@@ -15,6 +15,8 @@ from .routes.matches import router as matches_router
 from .routes.plan import router as plan_router
 from .routes.state import router as state_router
 from apps.api.routes import auth as auth_routes
+from .routes.risk import router as risk_router
+
 
 app = FastAPI(title="Probedge API")
 
@@ -78,4 +80,5 @@ app.include_router(tm5_router)
 app.include_router(matches_router)
 app.include_router(plan_router)
 app.include_router(state_router)
+app.include_router(risk_router)
 
