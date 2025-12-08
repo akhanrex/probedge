@@ -350,3 +350,37 @@ body.app-body {
     transform: rotate(360deg);
   }
 }
+
+/* PAGE TABS (e.g. Journal: Trades / Daily) */
+
+.page-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.page-tab {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: rgba(255, 255, 255, 0.02);
+  color: var(--app-text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.page-tab:hover {
+  color: var(--app-text-primary);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.page-tab.active {
+  color: var(--app-text-primary);
+  border-color: var(--app-accent);
+  background-color: var(--app-accent-soft);
+}
+
