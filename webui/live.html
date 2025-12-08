@@ -117,9 +117,9 @@
           </div>
         </section>
 
-        <!-- MAIN GRID + DETAIL SPLIT -->
-        <section class="main-layout">
-          <!-- LEFT: UNIVERSE GRID -->
+        <!-- MAIN GRID + PLAN SUMMARY (STACKED) -->
+        <section class="main-layout main-layout--stacked">
+          <!-- UNIVERSE GRID -->
           <section class="grid-panel">
             <div class="panel-header">
               <h2>Universe</h2>
@@ -160,47 +160,39 @@
             </div>
           </section>
 
-          <!-- RIGHT: DETAIL PANEL -->
-          <aside class="detail-panel">
-            <div class="detail-header">
-              <h2 id="detail-title">No symbol selected</h2>
-              <p class="detail-subtitle">
-                Click a row on the left to inspect tags, plan, and risk for that symbol.
-              </p>
+          <!-- PLAN SUMMARY FOR ALL SYMBOLS -->
+          <section class="grid-panel">
+            <div class="panel-header">
+              <h2>Plan Summary</h2>
+              <div class="panel-subtitle">
+                Intraday plan per symbol – tags, entries, stops, targets and risk.
+              </div>
             </div>
 
-            <div class="detail-body">
-              <div class="detail-row">
-                <span class="detail-label">Symbol</span>
-                <span class="detail-value" id="detail-symbol">—</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Mode</span>
-                <span class="detail-value" id="detail-mode">—</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Tags</span>
-                <span class="detail-value" id="detail-tags">—</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Plan</span>
-                <span class="detail-value" id="detail-plan">—</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Risk</span>
-                <span class="detail-value" id="detail-risk">—</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">Clock</span>
-                <span class="detail-value" id="detail-clock">—</span>
-              </div>
-              <p class="detail-note">
-                This panel is read-only. Orders are paper-mode and driven by backend
-                logic. Live OMS will plug in during Phase B without changing this UI.
-              </p>
+            <div class="table-wrapper">
+              <table class="grid-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Tags (PDC · OL · OT)</th>
+                    <th>Pick</th>
+                    <th>Conf%</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>SL</th>
+                    <th>T1</th>
+                    <th>T2</th>
+                    <th>Risk / trade</th>
+                  </tr>
+                </thead>
+                <tbody id="plans-tbody">
+                  <!-- Filled by live.js -->
+                </tbody>
+              </table>
             </div>
-          </aside>
+          </section>
         </section>
+
       </main>
 
       <!-- FOOTER -->
