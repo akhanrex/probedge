@@ -267,6 +267,9 @@ body {
   gap: 12px;
   flex: 1;
 }
+.main-layout.main-layout--single {
+  grid-template-columns: minmax(0, 1fr);
+}
 
 /* PANELS */
 
