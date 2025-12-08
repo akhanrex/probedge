@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Probedge – Dashboard</title>
+    <!-- existing terminal styles for base look (optional but safe) -->
+    <link rel="stylesheet" href="/webui-static/css/terminal.css" />
+    <!-- new shell + dashboard styles -->
+    <link rel="stylesheet" href="/webui-static/css/app-shell.css" />
+  </head>
+  <body class="app-body">
+    <!-- AUTH GATE OVERLAY -->
+    <div id="authOverlay" class="auth-overlay">
+      <div class="auth-spinner"></div>
+      <div class="auth-text">Checking Kite session…</div>
+    </div>
+
+    <!-- APP SHELL -->
+    <div id="appRoot" class="app-shell" style="display: none">
+      <!-- GLOBAL HEADER -->
+      <header class="app-header">
+        <div class="app-header-left">
+          <div>
+            <div class="app-logo">PROBEDGE</div>
+            <div class="app-logo-sub">Console</div>
+          </div>
+          <nav class="app-header-nav">
+            <!-- Dashboard active, others placeholders for now -->
+            <a href="#" class="app-nav-link active">Dashboard</a>
+            <a href="#" class="app-nav-link">Trade</a>
+            <a href="#" class="app-nav-link">Journal</a>
+            <a href="#" class="app-nav-link">Analytics</a>
+            <a href="#" class="app-nav-link">System</a>
+          </nav>
+        </div>
+        <div class="app-header-right">
+          <div id="pillMode" class="app-pill app-pill-mode-paper">
+            <span id="pillModeText">PAPER</span>
+          </div>
+          <div class="app-header-meta" id="headerClock">-- · --:--:--</div>
+          <div id="pillHealth" class="app-pill app-pill-health-ok">
+            <span class="app-pill-dot"></span>
+            <span id="pillHealthText">Health: --</span>
+          </div>
+          <div class="app-pill">
+            <span id="pillKiteText">Kite: --</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- MAIN CONTENT -->
+      <main class="app-main">
+        <!-- PAGE HEADER -->
+        <section class="page-header">
+          <div>
+            <div class="page-title">Dashboard</div>
+            <div class="page-subtitle" id="pageSubtitle">Today · --</div>
+          </div>
+          <div class="page-badge" id="phaseBadge">Phase: --</div>
+        </section>
+
+        <!-- SUMMARY CARDS -->
+        <section class="summary-grid">
+          <!-- Risk card -->
+          <div class="card">
+            <div class="card-title">Risk</div>
+            <div class="card-value" id="cardDailyRisk">₹ --</div>
+            <div class="card-row">
+              <span>Planned risk</span>
+              <span id="cardPlannedRisk">₹ --</span>
+            </div>
+            <div class="card-row">
+              <span>Risk / trade</span>
+              <span id="cardRiskPerTrade">₹ --</span>
+            </div>
+          </div>
+
+          <!-- P&L Today -->
+          <div class="card">
+            <div class="card-title">P&amp;L Today</div>
+            <div class="card-value" id="cardPnlDay">₹ --</div>
+            <div class="card-row">
+              <span>Open</span>
+              <span id="cardPnlOpen">₹ --</span>
+            </div>
+            <div class="card-row">
+              <span>Realized</span>
+              <span id="cardPnlRealized">₹ --</span>
+            </div>
+          </div>
+
+          <!-- Risk State -->
+          <div class="card">
+            <div class="card-title">Risk State</div>
+            <div class="card-value" id="cardRiskState">--</div>
+            <div class="card-row">
+              <span>Reason</span>
+              <span id="cardRiskReason">--</span>
+            </div>
+          </div>
+
+          <!-- System -->
+          <div class="card">
+            <div class="card-title">System</div>
+            <div class="card-row">
+              <span>Agent</span>
+              <span id="cardAgentStatus">--</span>
+            </div>
+            <div class="card-row">
+              <span>Health</span>
+              <span id="cardHealthStatus">--</span>
+            </div>
+            <div class="card-row">
+              <span>Kite</span>
+              <span id="cardKiteStatus">--</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ROW 2: CHART PANELS (PLACEHOLDERS FOR NOW) -->
+        <section class="layout-row">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Last 30 Sessions – Daily P&amp;L</div>
+              <div class="panel-subtitle" id="dailyPnlSummary">
+                Coming soon (needs /api/journal/daily)
+              </div>
+            </div>
+            <div style="font-size: 11px; color: var(--app-text-muted)">
+              This panel will show a bar chart of daily P&amp;L once we wire the
+              journal API.
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Equity Curve</div>
+              <div class="panel-subtitle" id="equitySummary">
+                Coming soon (needs historical P&amp;L)
+              </div>
+            </div>
+            <div style="font-size: 11px; color: var(--app-text-muted)">
+              This panel will show cumulative equity over recent sessions.
+            </div>
+          </div>
+        </section>
+
+        <!-- ROW 3: TODAY'S PLAN SNAPSHOT (PLACEHOLDER TABLE) -->
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Today’s Plan Snapshot</div>
+            <div class="panel-subtitle">
+              Compressed view of picks &amp; P&amp;L (reads /api/state)
+            </div>
+          </div>
+          <table class="table-snapshot">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Pick</th>
+                <th>Conf%</th>
+                <th>Qty</th>
+                <th>Entry</th>
+                <th>P&amp;L Today</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="todayPlanBody">
+              <tr>
+                <td colspan="7" style="color: var(--app-text-muted)">
+                  Data will appear here once we wire symbol-level snapshot.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- ROW 4: LAST 5 SESSIONS (PLACEHOLDER) -->
+        <section class="panel" style="margin-top: 14px">
+          <div class="panel-header">
+            <div class="panel-title">Last 5 Sessions</div>
+            <div class="panel-subtitle">
+              Summary of recent days from journal (coming soon)
+            </div>
+          </div>
+          <table class="table-snapshot">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>P&amp;L</th>
+                <th>Trades</th>
+                <th>Win%</th>
+              </tr>
+            </thead>
+            <tbody id="lastSessionsBody">
+              <tr>
+                <td colspan="4" style="color: var(--app-text-muted)">
+                  Will be filled once journal endpoints are integrated.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </main>
+    </div>
+
+    <!-- DASHBOARD SCRIPT -->
+    <script type="module" src="/webui-static/js/dashboard.js"></script>
+  </body>
+</html>
