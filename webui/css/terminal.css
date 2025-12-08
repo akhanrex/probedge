@@ -267,9 +267,11 @@ body {
   gap: 12px;
   flex: 1;
 }
-.main-layout.main-layout--single {
+
+.main-layout.main-layout--stacked {
   grid-template-columns: minmax(0, 1fr);
 }
+
 
 /* PANELS */
 
@@ -485,4 +487,14 @@ body {
   #symbol-filter {
     width: 120px;
   }
+}
+.header-link {
+  margin-left: 1rem;
+  font-size: 0.85rem;
+  text-decoration: none;
+  color: #9ca3af;
+}
+
+.header-link:hover {
+  color: #e5e7eb;
 }
