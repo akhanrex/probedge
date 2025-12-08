@@ -306,13 +306,21 @@ function classifyMode(mode) {
 // ---------- Timeline gating logic ----------
 
 function extractTime(meta) {
-  // meta.clock is ISO-like: "2025-08-01T09:20:00"
-  if (!meta || !meta.clock) return null;
-  const s = String(meta.clock);
-  const idx = s.indexOf("T");
-  if (idx === -1) return null;
-  return s.slice(idx + 1, idx + 9); // "HH:MM:SS"
+  if (!meta) return null;
+
+  // SIM mode: use sim_clock from backend
+  if (meta.sim === true && meta.clock) {
+    const s = String(meta.clock);
+    const idx = s.indexOf("T");
+    if (idx === -1) return null;
+    return s.slice(idx + 1, idx + 9); // "HH:MM:SS"
+  }
+
+  // LIVE mode: use browser clock
+  const now = new Date();
+  return now.toTimeString().slice(0, 8); // "HH:MM:SS"
 }
+
 
 function gateTagsAndPlan(row, meta) {
   const time = extractTime(meta);
