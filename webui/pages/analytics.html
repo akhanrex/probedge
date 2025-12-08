@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Probedge – Analytics</title>
+    <link rel="stylesheet" href="/webui-static/css/terminal.css" />
+    <link rel="stylesheet" href="/webui-static/css/app-shell.css" />
+  </head>
+  <body class="app-body">
+    <!-- AUTH GATE OVERLAY -->
+    <div id="authOverlay" class="auth-overlay">
+      <div class="auth-spinner"></div>
+      <div class="auth-text">Checking Kite session…</div>
+    </div>
+
+    <!-- APP SHELL -->
+    <div id="appRoot" class="app-shell" style="display: none">
+      <!-- GLOBAL HEADER -->
+      <header class="app-header">
+        <div class="app-header-left">
+          <div>
+            <div class="app-logo">PROBEDGE</div>
+            <div class="app-logo-sub">Console</div>
+          </div>
+          <nav class="app-header-nav">
+            <a href="/webui/pages/dashboard.html" class="app-nav-link"
+              >Dashboard</a
+            >
+            <a href="/" class="app-nav-link">Trade</a>
+            <a href="/webui/pages/journal.html" class="app-nav-link"
+              >Journal</a
+            >
+            <a href="/webui/pages/analytics.html" class="app-nav-link active"
+              >Analytics</a
+            >
+            <a href="/webui/pages/system.html" class="app-nav-link"
+              >System</a
+            >
+          </nav>
+        </div>
+        <div class="app-header-right">
+          <div id="pillMode" class="app-pill app-pill-mode-paper">
+            <span id="pillModeText">PAPER</span>
+          </div>
+          <div class="app-header-meta" id="headerClock">-- · --:--:--</div>
+          <div id="pillHealth" class="app-pill app-pill-health-ok">
+            <span class="app-pill-dot"></span>
+            <span id="pillHealthText">Health: --</span>
+          </div>
+          <div class="app-pill">
+            <span id="pillKiteText">Kite: --</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- MAIN CONTENT -->
+      <main class="app-main">
+        <!-- PAGE HEADER -->
+        <section class="page-header">
+          <div>
+            <div class="page-title">Analytics</div>
+            <div class="page-subtitle">
+              Backtest &amp; live performance (high-level)
+            </div>
+            <div class="page-tabs" style="margin-top: 8px">
+              <div class="page-tab active">Backtest 10Y</div>
+              <div class="page-tab">Last 12M</div>
+              <div class="page-tab">Live to date</div>
+            </div>
+          </div>
+          <div class="page-badge" id="analyticsBadge">
+            Data wiring pending
+          </div>
+        </section>
+
+        <!-- ROW 1: EQUITY CURVE -->
+        <section class="panel" style="margin-bottom: 14px">
+          <div class="panel-header">
+            <div class="panel-title">Equity Curve</div>
+            <div class="panel-subtitle" id="equitySubtitle">
+              Will be driven by backtest &amp; daily P&amp;L data
+            </div>
+          </div>
+          <div style="font-size: 11px; color: var(--app-text-muted)">
+            This panel will show cumulative equity. Once wired, the curve will
+            be based on your 10-year backtest or live data using
+            /api/journal/daily or a dedicated analytics endpoint.
+          </div>
+        </section>
+
+        <!-- ROW 2: METRIC GRID -->
+        <section class="summary-grid">
+          <div class="card">
+            <div class="card-title">Total P&amp;L</div>
+            <div class="card-value" id="analyticsTotalPnl">₹ --</div>
+            <div class="card-row">
+              <span>Period</span>
+              <span id="analyticsPeriod">--</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Max Drawdown</div>
+            <div class="card-value" id="analyticsMaxDd">--%</div>
+            <div class="card-row">
+              <span>₹</span>
+              <span id="analyticsMaxDdRs">₹ --</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Win Rate</div>
+            <div class="card-value" id="analyticsWinRate">--%</div>
+            <div class="card-row">
+              <span>Trades</span>
+              <span id="analyticsNumTrades">--</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Expectancy</div>
+            <div class="card-value" id="analyticsExpectancy">-- R</div>
+            <div class="card-row">
+              <span>Per trade</span>
+              <span id="analyticsNotes">Data wiring pending</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ROW 3: BREAKDOWN TABLES -->
+        <section class="layout-row">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">By Symbol</div>
+              <div class="panel-subtitle">
+                Avg P&amp;L and trade count per symbol
+              </div>
+            </div>
+            <table class="table-snapshot">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Avg P&amp;L (₹)</th>
+                  <th>Trades</th>
+                </tr>
+              </thead>
+              <tbody id="analyticsSymbolBody">
+                <tr>
+                  <td colspan="3" style="color: var(--app-text-muted)">
+                    Once wired, this will show per-symbol performance from
+                    journal / analytics endpoints.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">By Weekday</div>
+              <div class="panel-subtitle">
+                P&amp;L and win rate by day of week
+              </div>
+            </div>
+            <table class="table-snapshot">
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>P&amp;L (₹)</th>
+                  <th>Win%</th>
+                </tr>
+              </thead>
+              <tbody id="analyticsWeekdayBody">
+                <tr>
+                  <td colspan="3" style="color: var(--app-text-muted)">
+                    Once wired, this will show weekday patterns from
+                    journal / analytics endpoints.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ANALYTICS SCRIPT -->
+    <script type="module" src="/webui-static/js/analytics.js"></script>
+  </body>
+</html>
