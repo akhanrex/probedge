@@ -227,16 +227,23 @@ function mergeState(rawState, planState) {
   }
 
 
+  const isSim = rawState?.sim === true;
+
   const meta = {
     mode: planState?.mode || rawState?.mode || "unknown",
-    // playback/live day from sim_day is authoritative; otherwise fall back to portfolio plan’s date
-    date:
-      rawState?.sim_day ||
-      portfolioPlan.date ||
-      planState?.date ||
-      null,
-    clock: rawState?.sim_clock || null,
+
+    // For SIM: use sim_day. For real/live: trust planState.date.
+    date: isSim
+      ? (rawState?.sim_day || portfolioPlan.date || planState?.date || null)
+      : (planState?.date || portfolioPlan.date || rawState?.sim_day || null),
+
+    // For SIM: clock from sim_clock. For real/live: prefer planState.clock if present.
+    clock: isSim
+      ? (rawState?.sim_clock || null)
+      : (planState?.clock || rawState?.sim_clock || null),
+
     sim: rawState?.sim ?? null,
+  
 
     // Plan aggregates from portfolioPlan, with fallback to flattened/raw if ever needed
     daily_risk_rs:
@@ -793,12 +800,15 @@ async function pollStateLoop() {
       const raw = await getJSON("/api/state_raw");
 
       // 2) plan for that day
+      // For SIM playback, follow sim_day.
+      // For real/live days, always use /api/state (today).
       let planUrl = "/api/state";
-      if (raw && raw.sim_day) {
+      if (raw && raw.sim === true && raw.sim_day) {
         planUrl = `/api/state?day=${encodeURIComponent(raw.sim_day)}`;
       }
 
       const plan = await getJSON(planUrl);
+
 
       const merged = mergeState(raw, plan);
       lastMerged = merged;
