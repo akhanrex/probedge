@@ -384,3 +384,267 @@ body.app-body {
   background-color: var(--app-accent-soft);
 }
 
+/* === MANUAL TERMINAL – DARK RESEARCH THEME (v2) === */
+
+.manual-body {
+  background-color: #020617;
+}
+
+/* Layout: left = tags/matches, right = super-path lab */
+.manual-body .manual-main-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1.3fr);
+  gap: 16px;
+  align-items: flex-start;
+}
+
+@media (max-width: 1200px) {
+  .manual-body .manual-main-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Panels */
+.manual-body .manual-grid-panel,
+.manual-body .manual-detail-panel {
+  background-color: #020617;
+  border-radius: 16px;
+  border: 1px solid #1f2933;
+  padding: 12px 14px 14px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.45);
+}
+
+.manual-body .panel-header h2,
+.manual-body .detail-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.manual-body .panel-subtitle,
+.manual-body .detail-subtitle {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+/* Tag selector strip (PDC · OL · OT) */
+.manual-body .tag-select {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+@media (max-width: 980px) {
+  .manual-body .tag-select {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .manual-body .tag-select {
+    grid-template-columns: 1fr;
+  }
+}
+
+.manual-body select.tag-dd {
+  width: 100%;
+  padding: 7px 10px;
+  background-color: #020617;
+  color: #e5e7eb;
+  border-radius: 999px;
+  border: 1px solid #374151;
+  font-size: 12px;
+  outline: none;
+}
+
+.manual-body select.tag-dd:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.45);
+}
+
+/* Indicator pill in left table */
+.manual-body .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid #374151;
+  background-color: #020617;
+  color: #e5e7eb;
+}
+
+.manual-body .pill.bull {
+  background-color: rgba(22, 163, 74, 0.12);
+  border-color: #22c55e;
+  color: #bbf7d0;
+}
+
+.manual-body .pill.bear {
+  background-color: rgba(220, 38, 38, 0.14);
+  border-color: #f97373;
+  color: #fecaca;
+}
+
+.manual-body .pill.loading {
+  opacity: 0.7;
+}
+
+.manual-body .pill.error {
+  border-color: #f97373;
+  color: #fecaca;
+}
+
+/* Matching Days table */
+.manual-body .matches-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  background-color: #020617;
+  border-radius: 14px;
+  border: 1px solid #1f2933;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.manual-body .matches-table thead th {
+  background-color: #020617;
+  color: #9ca3af;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-bottom: 1px solid #1f2933;
+}
+
+.manual-body .matches-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #111827;
+}
+
+.manual-body .matches-table tbody tr:nth-child(odd) td {
+  background-color: rgba(15, 23, 42, 0.7);
+}
+
+.manual-body .matches-table tbody tr:nth-child(even) td {
+  background-color: rgba(15, 23, 42, 0.9);
+}
+
+.manual-body .matches-table tbody tr:hover td {
+  background-color: rgba(56, 189, 248, 0.11);
+}
+
+/* Notices / meta text inside dock */
+.manual-body #chartsDock .meta,
+.manual-body #chartsDock .notice {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* Super-Path + Cue split */
+.manual-body .super-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+@media (max-width: 980px) {
+  .manual-body .super-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.manual-body .charts-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 6px 0 10px;
+}
+
+.manual-body .charts-toolbar .meta {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* Chart & cue cards */
+.manual-body .chart-card.super-chart-card,
+.manual-body .cue-card {
+  background-color: #020617;
+  border-radius: 14px;
+  border: 1px solid #1f2933;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.6);
+  padding: 10px 10px 12px;
+}
+
+.manual-body .chart-canvas {
+  width: 100%;
+  height: 240px;
+  display: block;
+}
+
+/* Cue card details */
+.manual-body .cue-head {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.manual-body .cue-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.manual-body .cue-kv {
+  color: #9ca3af;
+}
+
+.manual-body .cue-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.manual-body .cue-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid #1f2933;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.manual-body .cue-pill.bull {
+  background-color: rgba(22, 163, 74, 0.18);
+  border-color: #22c55e;
+  color: #bbf7d0;
+}
+
+.manual-body .cue-pill.bear {
+  background-color: rgba(220, 38, 38, 0.18);
+  border-color: #f97373;
+  color: #fecaca;
+}
+
+.manual-body .cue-pill.neutral {
+  background-color: rgba(148, 163, 184, 0.12);
+  border-color: #9ca3af;
+  color: #e5e7eb;
+}
+
+/* Dock container – let table / cards define their own background */
+.manual-body #chartsDock.dock {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+  box-shadow: none;
+}
+
