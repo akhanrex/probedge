@@ -393,16 +393,18 @@ body.app-body {
 /* Layout: left = tags/matches, right = super-path lab */
 .manual-body .manual-main-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1.3fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: flex-start;
 }
 
+/* still one column on smaller widths, so media override is no-op but harmless */
 @media (max-width: 1200px) {
   .manual-body .manual-main-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
 
 /* Panels */
 .manual-body .manual-grid-panel,
@@ -681,5 +683,38 @@ body.app-body {
 .manual-body .row-actions .btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Header right: prevent overflow over nav */
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 40%;
+  justify-content: flex-end;
+}
+
+.app-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.app-header-right .health-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#health-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
