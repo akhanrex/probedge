@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Probedge – Journal</title>
+    <!-- base terminal styles (for global look) -->
+    <link rel="stylesheet" href="/webui-static/css/terminal.css" />
+    <!-- new shell styles -->
+    <link rel="stylesheet" href="/webui-static/css/app-shell.css" />
+  </head>
+  <body class="app-body">
+    <!-- AUTH GATE OVERLAY -->
+    <div id="authOverlay" class="auth-overlay">
+      <div class="auth-spinner"></div>
+      <div class="auth-text">Checking Kite session…</div>
+    </div>
+
+    <!-- APP SHELL -->
+    <div id="appRoot" class="app-shell" style="display: none">
+      <!-- GLOBAL HEADER -->
+      <header class="app-header">
+        <div class="app-header-left">
+          <div>
+            <div class="app-logo">PROBEDGE</div>
+            <div class="app-logo-sub">Console</div>
+          </div>
+          <nav class="app-header-nav">
+            <!-- Links are visual for now; wiring paths comes later -->
+            <a href="/webui/pages/dashboard.html" class="app-nav-link"
+              >Dashboard</a
+            >
+            <a href="#" class="app-nav-link">Trade</a>
+            <a href="/webui/pages/journal.html" class="app-nav-link active"
+              >Journal</a
+            >
+            <a href="#" class="app-nav-link">Analytics</a>
+            <a href="#" class="app-nav-link">System</a>
+          </nav>
+        </div>
+        <div class="app-header-right">
+          <div id="pillMode" class="app-pill app-pill-mode-paper">
+            <span id="pillModeText">PAPER</span>
+          </div>
+          <div class="app-header-meta" id="headerClock">-- · --:--:--</div>
+          <div id="pillHealth" class="app-pill app-pill-health-ok">
+            <span class="app-pill-dot"></span>
+            <span id="pillHealthText">Health: --</span>
+          </div>
+          <div class="app-pill">
+            <span id="pillKiteText">Kite: --</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- MAIN CONTENT -->
+      <main class="app-main">
+        <!-- PAGE HEADER -->
+        <section class="page-header">
+          <div>
+            <div class="page-title">Journal</div>
+            <div class="page-subtitle" id="pageSubtitle">
+              Recent trades &amp; daily P&amp;L
+            </div>
+            <div class="page-tabs" style="margin-top: 8px">
+              <div
+                id="tabTrades"
+                class="page-tab active"
+                data-view="tradesView"
+              >
+                Trades
+              </div>
+              <div id="tabDaily" class="page-tab" data-view="dailyView">
+                Daily
+              </div>
+            </div>
+          </div>
+          <div class="page-badge" id="journalRangeBadge">
+            Last 30 sessions
+          </div>
+        </section>
+
+        <!-- TRADES VIEW -->
+        <section id="tradesView" class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Trades</div>
+            <div class="panel-subtitle">
+              Detailed trade log (reads /api/journal/trades when available)
+            </div>
+          </div>
+
+          <!-- Filters row -->
+          <div
+            style="
+              display: flex;
+              flex-wrap: wrap;
+              gap: 10px;
+              margin-bottom: 10px;
+              font-size: 11px;
+            "
+          >
+            <div>
+              <label>Date range</label>
+              <select id="filterRange" style="font-size: 11px; padding: 2px 4px">
+                <option value="30d">Last 30 days</option>
+                <option value="7d">Last 7 days</option>
+                <option value="all">All</option>
+              </select>
+            </div>
+            <div>
+              <label>Symbol</label>
+              <select id="filterSymbol" style="font-size: 11px; padding: 2px 4px">
+                <option value="ALL">All</option>
+                <option value="TATAMOTORS">TATAMOTORS</option>
+                <option value="SBIN">SBIN</option>
+                <option value="RECLTD">RECLTD</option>
+                <option value="JSWENERGY">JSWENERGY</option>
+                <option value="LT">LT</option>
+                <option value="COALINDIA">COALINDIA</option>
+                <option value="ABB">ABB</option>
+                <option value="LICI">LICI</option>
+                <option value="ETERNAL">ETERNAL</option>
+                <option value="JIOFIN">JIOFIN</option>
+              </select>
+            </div>
+            <div>
+              <label>Direction</label>
+              <select
+                id="filterDirection"
+                style="font-size: 11px; padding: 2px 4px"
+              >
+                <option value="ALL">All</option>
+                <option value="BULL">BULL</option>
+                <option value="BEAR">BEAR</option>
+              </select>
+            </div>
+            <div>
+              <label>Result</label>
+              <select
+                id="filterResult"
+                style="font-size: 11px; padding: 2px 4px"
+              >
+                <option value="ALL">All</option>
+                <option value="WIN">Win</option>
+                <option value="LOSS">Loss</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Trades table -->
+          <table class="table-snapshot">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Symbol</th>
+                <th>Pick</th>
+                <th>Qty</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>Risk (₹)</th>
+                <th>P&amp;L (₹)</th>
+                <th>R</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody id="tradesBody">
+              <tr>
+                <td colspan="11" style="color: var(--app-text-muted)">
+                  Journal API not wired yet – trades will appear here once
+                  /api/journal/trades is available.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- DAILY VIEW -->
+        <section id="dailyView" class="panel" style="display: none; margin-top: 14px">
+          <div class="panel-header">
+            <div class="panel-title">Daily Summary</div>
+            <div class="panel-subtitle">
+              Aggregated P&amp;L per day (reads /api/journal/daily when
+              available)
+            </div>
+          </div>
+
+          <!-- Daily table -->
+          <table class="table-snapshot">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>P&amp;L (₹)</th>
+                <th>Trades</th>
+                <th>Win%</th>
+              </tr>
+            </thead>
+            <tbody id="dailyBody">
+              <tr>
+                <td colspan="4" style="color: var(--app-text-muted)">
+                  Daily summary will appear here once /api/journal/daily is
+                  available.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </main>
+    </div>
+
+    <!-- JOURNAL SCRIPT -->
+    <script type="module" src="/webui-static/js/journal.js"></script>
+  </body>
+</html>
