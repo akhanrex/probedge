@@ -798,17 +798,17 @@ async function pollStateLoop() {
     try {
       // 1) raw -> gives sim_day and clock
       const raw = await getJSON("/api/state_raw");
+      const isSim = raw && raw.sim === true;
 
       // 2) plan for that day
-      // For SIM playback, follow sim_day.
-      // For real/live days, always use /api/state (today).
+      // LIVE (sim === false): always ask backend "today" via bare /api/state
+      // SIM  (sim === true): use sim_day
       let planUrl = "/api/state";
-      if (raw && raw.sim === true && raw.sim_day) {
+      if (isSim && raw && raw.sim_day) {
         planUrl = `/api/state?day=${encodeURIComponent(raw.sim_day)}`;
       }
 
       const plan = await getJSON(planUrl);
-
 
       const merged = mergeState(raw, plan);
       lastMerged = merged;
@@ -833,6 +833,7 @@ async function pollStateLoop() {
     await new Promise((r) => setTimeout(r, STATE_POLL_MS));
   }
 }
+
 
 async function pollHealthLoop() {
   while (true) {
