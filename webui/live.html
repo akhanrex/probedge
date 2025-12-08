@@ -1,188 +1,215 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Probedge Live Terminal</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" href="/webui-static/css/terminal.css" />
-</head>
-<body>
-  <div class="app-shell">
-    <!-- HEADER -->
-    <header class="app-header">
-      <div class="app-brand">
-        <div class="logo-mark">P</div>
-        <div class="logo-text">
-          <div class="logo-title">Probedge</div>
-          <div class="logo-subtitle">Live Terminal</div>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Probedge – Live Terminal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Base dark terminal theme -->
+    <link rel="stylesheet" href="/webui-static/css/terminal.css" />
+    <!-- Shared console shell (Dashboard / Journal / Analytics / System) -->
+    <link rel="stylesheet" href="/webui-static/css/app-shell.css" />
+  </head>
+  <body class="app-body">
+    <div class="app-shell">
+      <!-- GLOBAL HEADER (same family as Console) -->
+      <header class="app-header">
+        <div class="app-header-left">
+          <div>
+            <div class="app-logo">PROBEDGE</div>
+            <div class="app-logo-sub">Trade</div>
+          </div>
+          <nav class="app-header-nav">
+            <a href="/webui/pages/dashboard.html" class="app-nav-link">Dashboard</a>
+            <a href="/" class="app-nav-link active">Trade</a>
+            <a href="/webui/pages/journal.html" class="app-nav-link">Journal</a>
+            <a href="/webui/pages/analytics.html" class="app-nav-link">Analytics</a>
+            <a href="/webui/pages/system.html" class="app-nav-link">System</a>
+          </nav>
         </div>
-      </div>
 
-      <div class="header-center">
-        <div class="mode-badge" id="summary-mode">—</div>
-        <div class="header-meta">
-          <span id="summary-date">—</span>
-          <span class="bullet">•</span>
-          <span id="summary-clock">—</span>
-        </div>
-      </div>
-
-      <div class="header-right">
-        <div class="health-indicator">
-          <span class="health-dot" id="health-dot"></span>
-          <span id="health-text">Checking…</span>
-        </div>
-      </div>
-    </header>
-
-    <!-- SUMMARY BAR -->
-    <section class="summary-bar">
-      <div class="summary-item">
-        <div class="label">Daily Risk</div>
-        <div class="value" id="summary-daily-risk">—</div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Planned Risk</div>
-        <div class="value" id="summary-planned-risk">—</div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Risk / Trade</div>
-        <div class="value" id="summary-risk-per-trade">—</div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Active Trades</div>
-        <div class="value" id="summary-active-trades">—</div>
-      </div>
-            <div class="summary-item">
-        <div class="label">Day P&amp;L</div>
-        <div class="value" id="summary-pnl-day">—</div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Open P&amp;L</div>
-        <div class="value" id="summary-pnl-open">—</div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Realized P&amp;L</div>
-        <div class="value" id="summary-pnl-realized">—</div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Risk Status</div>
-        <div class="value" id="summary-risk-status">—</div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Batch Agent</div>
-        <div class="value" id="summary-batch-agent">
-          WARN – batch_agent has never reported
-        </div>
-      </div>
-      <div class="summary-item">
-        <div class="label">Last Update</div>
-        <div class="value" id="summary-last-update">—</div>
-      </div>
-      <div class="summary-item summary-item--compact">
-        <div class="label">Risk (future)</div>
-        <div class="control-inline">
-          <input
-            id="risk-input"
-            type="number"
-            min="1000"
-            step="1000"
-            placeholder="10000"
-          />
-          <button id="risk-apply-btn" disabled title="Planned for future release">
-            Set
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <!-- MAIN CONTENT -->
-    <main class="main-layout">
-      <section class="grid-panel">
-        <div class="panel-header">
-          <h2>Universe</h2>
-          <div class="panel-header-right">
-            <input
-              id="symbol-filter"
-              type="text"
-              placeholder="Filter symbol / tag…"
-            />
+        <div class="app-header-right">
+          <div class="app-header-meta">
+            <span class="mode-badge" id="summary-mode">—</span>
+            <span id="summary-date">—</span>
+            <span class="bullet">•</span>
+            <span id="summary-clock">—</span>
+          </div>
+          <div class="health-indicator">
+            <span class="health-dot" id="health-dot"></span>
+            <span id="health-text">Checking…</span>
           </div>
         </div>
+      </header>
 
-        <div class="table-wrapper">
-          <table class="grid-table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>LTP</th>
-                <th>Change</th>
-                <th>PDC</th>
-                <th>OL</th>
-                <th>OT</th>
-                <th>Pick</th>
-                <th>Conf</th>
-                <th>Qty</th>
-                <th>Entry</th>
-                <th>SL</th>
-                <th>T1</th>
-                <th>T2</th>
-                <th>P&L</th>
-                <th>Status</th>
-              </tr>
-            </thead>
+      <!-- MAIN CONTENT -->
+      <main class="app-main">
+        <!-- PAGE HEADER: Trade – Live with Live/Manual tabs -->
+        <section class="page-header">
+          <div>
+            <div class="page-title">Trade</div>
+            <div class="page-subtitle">Live terminal (auto plan + paper exec)</div>
+            <div class="page-tabs" style="margin-top: 8px">
+              <div class="page-tab active">Live</div>
+              <a href="/webui/pages/terminal.html" class="page-tab">Manual</a>
+            </div>
+          </div>
+          <div class="page-badge" id="livePhaseBadge">
+            Intraday plan – timeline gated
+          </div>
+        </section>
 
-            <tbody id="symbols-tbody">
-              <!-- rows injected by live.js -->
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <!-- SUMMARY BAR (same data as before, new skin) -->
+        <section class="summary-bar">
+          <div class="summary-item">
+            <div class="label">Daily Risk</div>
+            <div class="value" id="summary-daily-risk">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Planned Risk</div>
+            <div class="value" id="summary-planned-risk">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Risk / Trade</div>
+            <div class="value" id="summary-risk-per-trade">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Active Trades</div>
+            <div class="value" id="summary-active-trades">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Day P&amp;L</div>
+            <div class="value" id="summary-pnl-day">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Open P&amp;L</div>
+            <div class="value" id="summary-pnl-open">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Realized P&amp;L</div>
+            <div class="value" id="summary-pnl-realized">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Risk Status</div>
+            <div class="value" id="summary-risk-status">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Batch Agent</div>
+            <div class="value" id="summary-batch-agent">—</div>
+          </div>
+          <div class="summary-item">
+            <div class="label">Last Update</div>
+            <div class="value" id="summary-last-update">—</div>
+          </div>
+          <div class="summary-item summary-item--compact">
+            <div class="label">Risk (future)</div>
+            <div class="control-inline">
+              <input
+                id="risk-input"
+                type="number"
+                min="1000"
+                step="1000"
+                placeholder="10000"
+              />
+              <button id="risk-apply-btn" disabled title="Planned for future release">
+                Set
+              </button>
+            </div>
+          </div>
+        </section>
 
-      <aside class="detail-panel">
-        <div class="panel-header">
-          <h2 id="detail-title">Symbol details</h2>
-        </div>
-        <div class="detail-body">
-          <div class="detail-row">
-            <span class="detail-label">Symbol</span>
-            <span class="detail-value" id="detail-symbol">—</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Mode</span>
-            <span class="detail-value" id="detail-mode">—</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Tags</span>
-            <span class="detail-value" id="detail-tags">—</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Plan</span>
-            <span class="detail-value" id="detail-plan">—</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Risk</span>
-            <span class="detail-value" id="detail-risk">—</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Clock</span>
-            <span class="detail-value" id="detail-clock">—</span>
-          </div>
-          <p class="detail-note">
-            This panel is read-only. Orders are still paper-only and driven by backend logic.
-          </p>
-        </div>
-      </aside>
-    </main>
+        <!-- MAIN GRID + DETAIL SPLIT -->
+        <section class="main-layout">
+          <!-- LEFT: UNIVERSE GRID -->
+          <section class="grid-panel">
+            <div class="panel-header">
+              <h2>Universe</h2>
+              <div class="panel-header-right">
+                <input
+                  id="symbol-filter"
+                  type="text"
+                  placeholder="Filter symbol / tag…"
+                />
+              </div>
+            </div>
 
-    <!-- FOOTER -->
-    <footer class="app-footer">
-      <span>Probedge engine &bull; Paper mode (no live orders)</span>
-      <span id="footer-meta"></span>
-    </footer>
-  </div>
+            <div class="table-wrapper">
+              <table class="grid-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>LTP</th>
+                    <th>Δ%</th>
+                    <th>PDC</th>
+                    <th>OL</th>
+                    <th>OT</th>
+                    <th>Pick</th>
+                    <th>Conf%</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>SL</th>
+                    <th>T1</th>
+                    <th>T2</th>
+                    <th>P&amp;L</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="symbols-tbody">
+                  <!-- Filled by live.js -->
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-  <script type="module" src="/webui-static/js/live.js?v=3"></script>
+          <!-- RIGHT: DETAIL PANEL -->
+          <aside class="detail-panel">
+            <div class="detail-header">
+              <h2 id="detail-title">No symbol selected</h2>
+              <p class="detail-subtitle">
+                Click a row on the left to inspect tags, plan, and risk for that symbol.
+              </p>
+            </div>
 
-</body>
+            <div class="detail-body">
+              <div class="detail-row">
+                <span class="detail-label">Symbol</span>
+                <span class="detail-value" id="detail-symbol">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Mode</span>
+                <span class="detail-value" id="detail-mode">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Tags</span>
+                <span class="detail-value" id="detail-tags">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Plan</span>
+                <span class="detail-value" id="detail-plan">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Risk</span>
+                <span class="detail-value" id="detail-risk">—</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Clock</span>
+                <span class="detail-value" id="detail-clock">—</span>
+              </div>
+              <p class="detail-note">
+                This panel is read-only. Orders are paper-mode and driven by backend
+                logic. Live OMS will plug in during Phase B without changing this UI.
+              </p>
+            </div>
+          </aside>
+        </section>
+      </main>
+
+      <!-- FOOTER -->
+      <footer class="app-footer">
+        <span>Probedge engine &bull; Paper mode (no live orders)</span>
+        <span id="footer-meta"></span>
+      </footer>
+    </div>
+
+    <script type="module" src="/webui-static/js/live.js?v=3"></script>
+  </body>
 </html>
