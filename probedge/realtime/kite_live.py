@@ -112,10 +112,22 @@ def tick_stream(symbols: Iterable[str] | None = None) -> Iterator[List[Tuple[str
     if symbols is None:
         symbols = SETTINGS.symbols
 
-    api_key = os.getenv("KITE_API_KEY", "").strip()
-    access_token = os.getenv("KITE_ACCESS_TOKEN", "").strip()
-    if not api_key or not access_token:
-        raise RuntimeError("KITE_API_KEY / KITE_ACCESS_TOKEN missing in environment (.env).")
+    # Use the same session file as the /api/auth endpoints
+    api_key = SETTINGS.kite_api_key
+    if not api_key:
+        raise RuntimeError("Kite API key not configured in .env")
+
+    sess = _load_session()
+    if not sess:
+        raise RuntimeError(
+            "No Kite session found. Open Probedge in browser and complete Kite login first."
+        )
+
+    access_token = str(sess.get("access_token") or "").strip()
+    if not access_token:
+        raise RuntimeError(
+            "Kite session file is missing access_token. Please login again from Probedge."
+        )
 
     kc = KiteConnect(api_key=api_key)
     kc.set_access_token(access_token)
