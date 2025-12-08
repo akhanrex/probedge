@@ -648,3 +648,38 @@ body.app-body {
   box-shadow: none;
 }
 
+/* Manual terminal row action buttons */
+.manual-body .row-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.manual-body .row-actions .btn {
+  background: transparent;
+  border-radius: 999px;
+  border: 1px solid #374151;
+  color: #e5e7eb;
+  font-size: 11px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.05s ease;
+}
+
+.manual-body .row-actions .btn.btn-sm {
+  padding: 4px 8px;
+}
+
+.manual-body .row-actions .btn:hover:not(:disabled) {
+  background-color: rgba(148, 163, 184, 0.14);
+  border-color: #38bdf8;
+  transform: translateY(-0.5px);
+}
+
+.manual-body .row-actions .btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
