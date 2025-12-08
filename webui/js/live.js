@@ -308,17 +308,18 @@ function classifyMode(mode) {
 function extractTime(meta) {
   if (!meta) return null;
 
-  // SIM mode: use sim_clock from backend
-  if (meta.sim === true && meta.clock) {
-    const s = String(meta.clock);
-    const idx = s.indexOf("T");
-    if (idx === -1) return null;
-    return s.slice(idx + 1, idx + 9); // "HH:MM:SS"
+  // If we are in real/live mode (sim === false), use browser clock.
+  if (meta.sim === false) {
+    const now = new Date();
+    return now.toTimeString().slice(0, 8); // "HH:MM:SS"
   }
 
-  // LIVE mode: use browser clock
-  const now = new Date();
-  return now.toTimeString().slice(0, 8); // "HH:MM:SS"
+  // SIM / playback mode → use sim_clock from backend
+  if (!meta.clock) return null;
+  const s = String(meta.clock);
+  const idx = s.indexOf("T");
+  if (idx === -1) return null;
+  return s.slice(idx + 1, idx + 9); // "HH:MM:SS"
 }
 
 
