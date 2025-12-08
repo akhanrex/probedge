@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from kiteconnect import KiteConnect, KiteTicker
 
 from probedge.infra.settings import SETTINGS
+from probedge.storage.resolver import ALIASES as SYMBOL_ALIASES
 
 log = logging.getLogger(__name__)
 
@@ -63,18 +64,27 @@ def _instruments_map(kc: KiteConnect) -> Dict[str, int]:
     # Logical universe
     logical_syms = [s.upper() for s in SETTINGS.symbols]
 
-    # Try to get symbol_map from settings (if defined)
-    # Expected shape: {"TATAMOTORS": "TMPV", "SBIN": "SBIN", ...}
-    try:
-        symbol_map = getattr(SETTINGS, "symbol_map", {}) or {}
-    except Exception:
-        symbol_map = {}
+    # ---- NEW: canonical alias mapping ----
+    # 1) Base: resolver aliases (storage side already knows TMPV)
+    alias_map: Dict[str, str] = {
+        k.upper(): v.upper() for k, v in SYMBOL_ALIASES.items()
+    }
 
-    # Build "real" tradingsymbols we will look for in Kite instruments
+    # 2) Optional overrides from SETTINGS.symbol_map (if we add later in config)
+    try:
+        settings_map = getattr(SETTINGS, "symbol_map", {}) or {}
+    except Exception:
+        settings_map = {}
+
+    for k, v in settings_map.items():
+        alias_map[k.upper()] = str(v).upper()
+
+    # Build "real" tradingsymbols we will look for in Kite instruments.
+    # Example: "TATAMOTORS" -> "TMPV"; everything else maps to itself.
     real_for_logical: Dict[str, str] = {}
     for sym in logical_syms:
-        real = symbol_map.get(sym, sym)
-        real_for_logical[sym] = real.upper()
+        real_for_logical[sym] = alias_map.get(sym, sym)
+
 
     wanted_real = set(real_for_logical.values())
 
