@@ -26,6 +26,25 @@ from probedge.infra.settings import SETTINGS
 
 log = logging.getLogger(__name__)
 
+import json
+
+# Same session file logic as apps/api/routes/auth.py
+SESSION_FILE: Path = (
+    SETTINGS.kite_session_file
+    if getattr(SETTINGS, "kite_session_file", None)
+    else (SETTINGS.data_dir / "data/state/kite_session.json")
+)
+
+def _load_session() -> dict | None:
+    """Load stored Kite session from disk, or None."""
+    if not SESSION_FILE.exists():
+        return None
+    try:
+        with SESSION_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
 # Load .env explicitly from repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOTENV_PATH = REPO_ROOT / ".env"
