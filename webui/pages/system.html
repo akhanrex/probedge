@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Probedge – System</title>
+    <link rel="stylesheet" href="/webui-static/css/terminal.css" />
+    <link rel="stylesheet" href="/webui-static/css/app-shell.css" />
+  </head>
+  <body class="app-body">
+    <!-- AUTH GATE OVERLAY -->
+    <div id="authOverlay" class="auth-overlay">
+      <div class="auth-spinner"></div>
+      <div class="auth-text">Checking Kite session…</div>
+    </div>
+
+    <!-- APP SHELL -->
+    <div id="appRoot" class="app-shell" style="display: none">
+      <!-- GLOBAL HEADER -->
+      <header class="app-header">
+        <div class="app-header-left">
+          <div>
+            <div class="app-logo">PROBEDGE</div>
+            <div class="app-logo-sub">Console</div>
+          </div>
+          <nav class="app-header-nav">
+            <a href="/webui/pages/dashboard.html" class="app-nav-link"
+              >Dashboard</a
+            >
+            <a href="/" class="app-nav-link">Trade</a>
+            <a href="/webui/pages/journal.html" class="app-nav-link"
+              >Journal</a
+            >
+            <a href="/webui/pages/analytics.html" class="app-nav-link"
+              >Analytics</a
+            >
+            <a href="/webui/pages/system.html" class="app-nav-link active"
+              >System</a
+            >
+          </nav>
+        </div>
+        <div class="app-header-right">
+          <div id="pillMode" class="app-pill app-pill-mode-paper">
+            <span id="pillModeText">PAPER</span>
+          </div>
+          <div class="app-header-meta" id="headerClock">-- · --:--:--</div>
+          <div id="pillHealth" class="app-pill app-pill-health-ok">
+            <span class="app-pill-dot"></span>
+            <span id="pillHealthText">Health: --</span>
+          </div>
+          <div class="app-pill">
+            <span id="pillKiteText">Kite: --</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- MAIN CONTENT -->
+      <main class="app-main">
+        <!-- PAGE HEADER -->
+        <section class="page-header">
+          <div>
+            <div class="page-title">System</div>
+            <div class="page-subtitle">
+              Environment, risk configuration &amp; health
+            </div>
+          </div>
+          <div class="page-badge" id="systemBadge">Loading…</div>
+        </section>
+
+        <!-- ROW 1: ENV + RISK CARDS -->
+        <section class="summary-grid">
+          <div class="card">
+            <div class="card-title">Environment</div>
+            <div class="card-row">
+              <span>Mode</span>
+              <span id="sysMode">--</span>
+            </div>
+            <div class="card-row">
+              <span>Data dir</span>
+              <span id="sysDataDir">--</span>
+            </div>
+            <div class="card-row">
+              <span>Symbols</span>
+              <span id="sysSymbols">--</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Risk</div>
+            <div class="card-row">
+              <span>Daily risk</span>
+              <span id="sysDailyRisk">₹ --</span>
+            </div>
+            <div class="card-row">
+              <span>Risk / trade</span>
+              <span id="sysRiskPerTrade">₹ --</span>
+            </div>
+            <div class="card-row">
+              <span>Planned risk</span>
+              <span id="sysPlannedRisk">₹ --</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Health</div>
+            <div class="card-row">
+              <span>System</span>
+              <span id="sysHealthStatus">--</span>
+            </div>
+            <div class="card-row">
+              <span>Agent</span>
+              <span id="sysAgentStatus">--</span>
+            </div>
+            <div class="card-row">
+              <span>QC</span>
+              <span id="sysQcStatus">--</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Kite Session</div>
+            <div class="card-row">
+              <span>Status</span>
+              <span id="sysKiteStatus">--</span>
+            </div>
+            <div class="card-row">
+              <span>Note</span>
+              <span style="color: var(--app-text-muted)"
+                >Must be valid for live trading.</span
+              >
+            </div>
+          </div>
+        </section>
+
+        <!-- ROW 2: RISK CONFIG -->
+        <section class="panel" style="margin-top: 14px">
+          <div class="panel-header">
+            <div class="panel-title">Risk Configuration</div>
+            <div class="panel-subtitle">
+              Update daily risk for future entries (POST /api/risk)
+            </div>
+          </div>
+          <div
+            style="
+              display: flex;
+              flex-wrap: wrap;
+              gap: 12px;
+              align-items: center;
+              font-size: 12px;
+            "
+          >
+            <div>
+              <label>Daily risk (₹)</label>
+              <input
+                id="riskInput"
+                type="number"
+                min="1000"
+                step="500"
+                style="
+                  font-size: 12px;
+                  padding: 4px 6px;
+                  background-color: var(--app-bg-elevated-soft);
+                  border-radius: 6px;
+                  border: 1px solid var(--app-border-subtle);
+                  color: var(--app-text-primary);
+                "
+              />
+            </div>
+            <button
+              id="riskApplyBtn"
+              style="
+                font-size: 12px;
+                padding: 6px 12px;
+                border-radius: 999px;
+                border: none;
+                cursor: pointer;
+                background-color: var(--app-accent);
+                color: #000;
+              "
+            >
+              Apply
+            </button>
+            <div
+              id="riskApplyMsg"
+              style="font-size: 11px; color: var(--app-text-muted)"
+            >
+              Changes affect only future entries.
+            </div>
+          </div>
+        </section>
+
+        <!-- ROW 3: HEALTH & QC DETAILS -->
+        <section class="layout-row" style="margin-top: 14px">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Health Detail</div>
+              <div class="panel-subtitle">
+                System status &amp; last heartbeat information
+              </div>
+            </div>
+            <div id="healthDetail" style="font-size: 12px; color: var(--app-text-muted)">
+              Waiting for /api/health…
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">QC Detail</div>
+              <div class="panel-subtitle">
+                Data quality summary (from health / QC endpoints)
+              </div>
+            </div>
+            <div id="qcDetail" style="font-size: 12px; color: var(--app-text-muted)">
+              If QC information is exposed by the backend, it will be listed
+              here.
+            </div>
+          </div>
+        </section>
+
+        <!-- ROW 4: EVENT LOG PLACEHOLDER -->
+        <section class="panel" style="margin-top: 14px">
+          <div class="panel-header">
+            <div class="panel-title">Event Log</div>
+            <div class="panel-subtitle">
+              Recent system events (to be wired later)
+            </div>
+          </div>
+          <table class="table-snapshot">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Severity</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="eventLogBody">
+              <tr>
+                <td colspan="3" style="color: var(--app-text-muted)">
+                  When a backend endpoint for events/logs is added, this table
+                  will show recent WARN/ERROR events.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </main>
+    </div>
+
+    <!-- SYSTEM SCRIPT -->
+    <script type="module" src="/webui-static/js/system.js"></script>
+  </body>
+</html>
