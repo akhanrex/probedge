@@ -272,6 +272,10 @@ body {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.main-layout.main-layout--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 
 /* PANELS */
 
