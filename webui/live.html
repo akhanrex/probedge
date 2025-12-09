@@ -20,26 +20,29 @@
           </div>
           <nav class="app-header-nav">
             <a href="/webui/pages/dashboard.html" class="app-nav-link">Dashboard</a>
-            <a href="/live" class="app-nav-link active">Trade</a>
+            <a href="/" class="app-nav-link active">Trade</a>      <!-- ❌ THIS IS LOGIN -->
             <a href="/webui/pages/journal.html" class="app-nav-link">Journal</a>
             <a href="/webui/pages/analytics.html" class="app-nav-link">Analytics</a>
             <a href="/webui/pages/system.html" class="app-nav-link">System</a>
           </nav>
+     
         </div>
-
+      
         <div class="app-header-right">
-          <div class="app-header-meta">
-            <span class="mode-badge" id="summary-mode">—</span>
-            <span id="summary-date">—</span>
-            <span class="bullet">•</span>
-            <span id="summary-clock">—</span>
+          <div id="pillMode" class="app-pill app-pill-mode-paper">
+            <span id="pillModeText">PAPER</span>
           </div>
-          <div class="health-indicator">
-            <span class="health-dot" id="health-dot"></span>
-            <span id="health-text">Checking…</span>
+          <div class="app-header-meta" id="headerClock">-- · --:--:--</div>
+          <div id="pillHealth" class="app-pill app-pill-health-ok">
+            <span class="app-pill-dot"></span>
+            <span id="pillHealthText">Health: --</span>
+          </div>
+          <div class="app-pill">
+            <span id="pillKiteText">Kite: --</span>
           </div>
         </div>
       </header>
+      
 
       <!-- MAIN CONTENT -->
       <main class="app-main">
@@ -118,7 +121,7 @@
         </section>
 
         <!-- MAIN GRID ONLY -->
-        <section class="main-layout">
+        <section class="main-layout main-layout--single">
           <section class="grid-panel">
             <div class="panel-header">
               <h2>Universe</h2>
