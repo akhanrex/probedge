@@ -161,3 +161,33 @@ def _debug_dump_settings():
 
 if os.environ.get("PROBEDGE_DEBUG_SETTINGS") == "1":
     _debug_dump_settings()
+
+# --- PROBEDGE_ABSOLUTE_STATE_PATH_UNDER_DATA_DIR ---
+from pathlib import Path as _Path
+
+def _pb__abs_under_data_dir(_maybe_path: str, _default_rel: str) -> str:
+    base = _Path(getattr(SETTINGS, "data_dir", ".")).expanduser().resolve()
+    if not _maybe_path:
+        return str(base / _default_rel)
+    P = _Path(str(_maybe_path)).expanduser()
+    return str(P if P.is_absolute() else (base / P))
+
+def _pb__safe_set(obj, name, value) -> None:
+    try:
+        setattr(obj, name, value)
+        return
+    except Exception:
+        pass
+    try:
+        object.__setattr__(obj, name, value)
+    except Exception:
+        pass
+
+# Force state path to be absolute under DATA_DIR so SIM/LIVE switching is deterministic.
+try:
+    _paths = getattr(SETTINGS, "paths", None)
+    if _paths is not None:
+        _pb__safe_set(_paths, "state", _pb__abs_under_data_dir(getattr(_paths, "state", None), "data/state/live_state.json"))
+except Exception:
+    pass
+

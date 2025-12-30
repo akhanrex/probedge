@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Probedge – Manual Terminal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Dark trading theme + console shell -->
+    <link rel="stylesheet" href="/webui-static/css/terminal.css" />
+    <link rel="stylesheet" href="/webui-static/css/app-shell.css" />
+  </head>
+  <body class="app-body manual-body">
+    <div class="app-shell">
+      <!-- GLOBAL HEADER -->
+      <header class="app-header">
+        <div class="app-header-left">
+          <div>
+            <div class="app-logo">PROBEDGE</div>
+            <div class="app-logo-sub">Trade</div>
+          </div>
+          <nav class="app-header-nav">
+            <a href="/webui/pages/dashboard.html" class="app-nav-link">Dashboard</a>
+            <a href="/webui/live.html" class="app-nav-link active">Trade</a>
+            <a href="/webui/pages/journal.html" class="app-nav-link">Journal</a>
+            <a href="/webui/pages/analytics.html" class="app-nav-link">Analytics</a>
+            <a href="/webui/pages/system.html" class="app-nav-link">System</a>
+          </nav>
+        </div>
+        <div class="app-header-right">
+          <div class="app-header-meta">
+            Manual · Path &amp; stats explorer
+          </div>
+        </div>
+      </header>
+
+      <!-- MAIN CONTENT -->
+      <main class="app-main">
+        <!-- PAGE HEADER -->
+        <section class="page-header">
+          <div>
+            <div class="page-title">Trade</div>
+            <div class="page-subtitle">
+              Manual terminal – research lab for PDC · OL · OT paths
+            </div>
+            <div class="page-tabs" style="margin-top: 8px">
+              <a href="/live" class="page-tab">Live</a>
+              <a href="/manual" class="page-tab active">Manual</a>
+            </div>
+          </div>
+          <div class="page-badge">Analysis only · No live orders</div>
+        </section>
+
+        <!-- MAIN LAYOUT: LEFT = TAG DASHBOARD, RIGHT = SUPER-PATH / CHARTS -->
+        <section class="manual-main-layout">
+          <!-- LEFT: TAG DASHBOARD (home.js drives rows via #terminalBody) -->
+          <section class="grid-panel manual-grid-panel">
+            <div class="panel-header">
+              <h2>Tag Dashboard</h2>
+              <div class="panel-subtitle">
+                One row per symbol with its current PDC · OL · OT combo.
+              </div>
+            </div>
+
+            <div class="table-wrapper">
+              <table class="grid-table">
+                <thead>
+                  <tr>
+                    <th>Stock</th>
+                    <th>Tags (PDC · OL · OT)</th>
+                    <th>Indicator</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="terminalBody">
+                  <!-- Rows injected by webui/js/home.js -->
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- RIGHT: SUPER-PATH + CUES + CHARTS -->
+          <aside class="detail-panel manual-detail-panel">
+            <div class="detail-header">
+              <h2>Path Stats</h2>
+              <p class="detail-subtitle">
+                Select a row on the left to load historical matches and
+                super-path cone for that tag combo.
+              </p>
+            </div>
+
+            <div class="detail-body">
+              <!-- home.js will create superDock + controls + charts into this dock -->
+              <div id="chartsDock" class="dock">
+                <div class="detail-note">
+                  Once you select a symbol/tag combo, historical matches and
+                  cone charts will render in this area.
+                </div>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </main>
+
+      <!-- FOOTER -->
+      <footer class="app-footer">
+        <span>Probedge manual terminal • Research mode</span>
+      </footer>
+    </div>
+
+    <!-- Manual terminal logic (unchanged) -->
+    <script type="module" src="/webui/js/home.js"></script>
+  </body>
+</html>

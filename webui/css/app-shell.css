@@ -718,3 +718,6 @@ body.app-body {
   text-overflow: ellipsis;
 }
 
+#pillHealthText {
+  font-size: 11px;
+}

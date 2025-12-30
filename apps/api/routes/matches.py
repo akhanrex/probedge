@@ -1,66 +1,59 @@
-from fastapi import APIRouter, HTTPException, Query
+
+from fastapi import APIRouter, Query
 import pandas as pd, json
-from probedge.storage.resolver import locate_for_read
+
+from apps.storage.tm5 import read_master
 from ._jsonsafe import json_safe_df
+from ._freq_select import apply_lookback, select_hist_batch_parity
 
 router = APIRouter()
 
-def _norm(x): 
-    return str(x).strip().upper()
+def _norm(x):
+    return str(x or "").strip().upper()
 
 @router.get("/api/matches")
 def get_matches(
     symbol: str = Query(...),
-    ot: str = Query(..., description="OpeningTrend: BULL|BEAR|TR"),
-    ol: str = Query("", description="OpenLocation: OAR|OOH|OOL|OIM|OBR (optional)"),
-    pdc: str = Query("", description="PrevDayContext: BULL|BEAR|TR (optional)")
+    ot: str = Query(...),
+    ol: str = Query(""),
+    pdc: str = Query(""),
+    asof: str | None = Query(None),
 ):
-    path = locate_for_read("masters", symbol)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"MASTER not found for {symbol}")
+    sym = _norm(symbol)
+    m = read_master(sym)
+    if m is None or m.empty:
+        return {"symbol": sym, "ot": _norm(ot), "ol": _norm(ol), "pdc": _norm(pdc), "dates": [], "rows": []}
 
-    try:
-        m = pd.read_csv(path)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read MASTER CSV: {e}")
+    m, _day = apply_lookback(m, asof)
+    hist_bb, meta = select_hist_batch_parity(m, ot, ol, pdc)
 
-    # Normalise core tags for filtering
-    m["OpeningTrend"] = m["OpeningTrend"].astype(str).str.upper().str.strip()
-    if ol:
-        m = m[m["OpenLocation"].astype(str).str.upper().str.strip() == _norm(ol)]
-    if pdc:
-        m = m[m["PrevDayContext"].astype(str).str.upper().str.strip() == _norm(pdc)]
-    m = m[m["OpeningTrend"] == _norm(ot)]
-    lab = m["Result"].astype(str).str.upper().str.strip()
-    m = m[lab.isin(["BULL", "BEAR"])]
+    # Short aliases for UI
+    if not hist_bb.empty:
+        if "OpeningTrend" in hist_bb.columns:    hist_bb["OT"]  = hist_bb["OpeningTrend"]
+        if "OpenLocation" in hist_bb.columns:    hist_bb["OL"]  = hist_bb["OpenLocation"]
+        if "PrevDayContext" in hist_bb.columns:  hist_bb["PDC"] = hist_bb["PrevDayContext"]
+        if "FirstCandleType" in hist_bb.columns: hist_bb["FCT"] = hist_bb["FirstCandleType"]
+        if "RangeStatus" in hist_bb.columns:     hist_bb["RS"]  = hist_bb["RangeStatus"]
 
-    # Short aliases for the front-end
-    if "PrevDayContext" in m.columns:
-        m["PDC"] = m["PrevDayContext"]
-    if "OpenLocation" in m.columns:
-        m["OL"] = m["OpenLocation"]
-    if "OpeningTrend" in m.columns:
-        m["OT"] = m["OpeningTrend"]
-    if "FirstCandleType" in m.columns:
-        m["FCT"] = m["FirstCandleType"]
-    if "RangeStatus" in m.columns:
-        m["RS"] = m["RangeStatus"]
+    hist_bb = json_safe_df(hist_bb)
+    rows = json.loads(hist_bb.to_json(orient="records"))
 
-    # Sanitize + force JSON-safe roundtrip
-    m = json_safe_df(m)
-    try:
-        rows = json.loads(m.to_json(orient="records"))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Serialization error: {e}")
+    for r in rows:
+        d = r.get("Date")
+        if isinstance(d, str) and len(d) >= 10:
+            r["Date"] = d[:10]
 
-    # Dates list (safe strings)
     dates = sorted({r.get("Date") for r in rows if r.get("Date")})
 
     return {
-        "symbol": symbol.upper(),
-        "ot": _norm(ot),
-        "ol": _norm(ol) if ol else "",
-        "pdc": _norm(pdc) if pdc else "",
+        "symbol": sym,
+        "ot": _norm(ot), "ol": _norm(ol), "pdc": _norm(pdc),
+        "level": meta.get("level"),
+        "total": int(meta.get("total") or 0),
+        "total_all": int(meta.get("total_all") or 0),
+        "tr_n": int(meta.get("tr_n") or 0),
+        "counts": meta.get("counts") or {"BULL": int(meta.get("bull_n") or 0), "BEAR": int(meta.get("bear_n") or 0), "TR": int(meta.get("tr_n") or 0), "TOTAL": int((meta.get("bull_n") or 0) + (meta.get("bear_n") or 0) + (meta.get("tr_n") or 0))},
+
         "dates": dates,
         "rows": rows,
     }

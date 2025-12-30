@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import time as _time
 
+from probedge.core import classifiers as CORE
 # ---- thresholds (mirror your batch code) ----
 T0 = _time(9, 40); T1 = _time(15, 5)
 SESSION_START = _time(9, 15); ORB_END = _time(9, 35)
@@ -281,3 +282,11 @@ def decide_for_day(df_tm5: pd.DataFrame, master: pd.DataFrame, day: pd.Timestamp
         "Prev_L": prev_l,
         "Entry": entry_px,
     }
+
+# ---- Canonical delegation (single source of truth; avoid drift) ----
+slice_window = CORE.slice_window
+prev_trading_day_ohlc = CORE.prev_trading_day_ohlc
+compute_prevdaycontext_robust = CORE.compute_prevdaycontext_robust
+compute_openingtrend_robust = CORE.compute_openingtrend_robust
+compute_openlocation = CORE.compute_openlocation
+compute_openlocation_from_df = CORE.compute_openlocation_from_df

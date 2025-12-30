@@ -180,30 +180,37 @@ def _dir_count(df):
 def compute_openingtrend_robust(df_or_intraday: pd.DataFrame,
                                 day_norm: Optional[pd.Timestamp] = None) -> str:
     """
-    Backwards-compatible OT:
+    OpeningTrend from the 09:15–09:40 inclusive window.
 
-      1) Old style: compute_openingtrend_robust(df_day_intraday)
-         -> df_or_intraday is already a single-day dataframe.
+    Interpretation (your spec):
+      - Bars 1–5 from 09:15 onwards.
+      - In live, that is 09:15 → 09:39:50 (fifth candle closes at ~09:39:50).
+      - In TM5/SIM, we approximate that with the first 5 x 5-minute bars
+        (normally labelled up to 09:40).
 
-      2) New repo style: compute_openingtrend_robust(i5_multi_day, day_norm)
-         -> we slice out that day first using DateTime.
-
-    Returns one of {"BULL","BEAR","TR"} for 09:15–09:40 window.
+    Returns one of {"BULL","BEAR","TR"}.
     """
     if df_or_intraday is None or df_or_intraday.empty:
         return "TR"
 
+    # Resolve single-day frame
     if day_norm is not None:
         dti = _to_dt_series(df_or_intraday["DateTime"]).dt.normalize()
         day_norm = pd.to_datetime(day_norm).normalize()
         df_day = df_or_intraday[dti.eq(day_norm)].copy()
     else:
-        df_day = df_or_intraday
+        df_day = df_or_intraday.copy()
 
+    if df_day.empty:
+        return "TR"
+
+    # Old-canonical behavior: inclusive time window 09:15–09:40
+    # (This may include 6 bars if your data has a 09:40 timestamped bar.)
     win = slice_window(df_day, _time(9, 15), _time(9, 40))
     if win.empty:
         return "TR"
     win = win.sort_values("DateTime")
+
 
     O0 = float(win["Open"].iloc[0])
     Cn = float(win["Close"].iloc[-1])

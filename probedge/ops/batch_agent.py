@@ -11,6 +11,34 @@ import pandas as pd
 
 from probedge.infra.settings import SETTINGS
 from probedge.storage.atomic_json import AtomicJSON
+
+# --- PROBEDGE_MERGE_WRITE ---
+def _pb_merge_write(aj, patch):
+    """
+    Merge-write to live_state.json so partial writers (health/last_closed/batch_agent)
+    never clobber plan_snapshot/portfolio_plan/quotes/tags/positions.
+    Shallow-merge dicts; nested dicts (quotes/last_closed/health) are updated.
+    """
+    try:
+        state = aj.read(default={}) or {}
+    except Exception:
+        state = {}
+
+    if not isinstance(state, dict):
+        state = {}
+
+    if not isinstance(patch, dict):
+        # fallback: keep original behavior
+        aj.write(patch)
+        return
+
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(state.get(k), dict):
+            state[k].update(v)
+        else:
+            state[k] = v
+
+    _pb_merge_write(aj, state)
 from probedge.decision.picker_batchv1 import read_tm5, decide_for_day
 from probedge.decision.sl import compute_stop
 from probedge.infra.health import record_batch_agent_heartbeat
@@ -122,9 +150,7 @@ def process_once(state_path: str):
             state.setdefault("control", {})
             state["control"]["status"] = "error"
 
-    aj.write(state)
-
-
+    _pb_merge_write(aj, state)
 def main():
     state_path = SETTINGS.paths.state or "data/state/live_state.json"
     Path(state_path).parent.mkdir(parents=True, exist_ok=True)

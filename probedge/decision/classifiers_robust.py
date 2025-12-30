@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 from datetime import time as _time
-from . import classifiers_robust as _self  # just for local ref
 
+from probedge.core import classifiers as CORE
 TH_NARROW      = 1.00
 TH_BODY_STRONG = 0.45
 TH_BODY_WEAK   = 0.25
@@ -119,3 +119,11 @@ def compute_openlocation_from_df(df_day_intraday: pd.DataFrame, prev_ohlc=None) 
     except Exception:
         return ""
     return compute_openlocation(day_open, prev_ohlc)
+
+# ---- Canonical delegation (single source of truth; avoid drift) ----
+slice_window = CORE.slice_window
+prev_trading_day_ohlc = CORE.prev_trading_day_ohlc
+compute_prevdaycontext_robust = CORE.compute_prevdaycontext_robust
+compute_openingtrend_robust = CORE.compute_openingtrend_robust
+compute_openlocation = CORE.compute_openlocation
+compute_openlocation_from_df = CORE.compute_openlocation_from_df

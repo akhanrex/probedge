@@ -7,10 +7,12 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Dict, Any, Optional
 
 from probedge.infra.settings import SETTINGS
+from probedge.storage.atomic_json import AtomicJSON
 
 
 STATE_PATH = SETTINGS.paths.state  # e.g. data/state/live_state.json
@@ -48,10 +50,25 @@ def _read_state() -> Dict[str, Any]:
 def _atomic_write_state(state: Dict[str, Any]) -> None:
     """Write live_state.json atomically (avoid partial writes)."""
     os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-    tmp_path = STATE_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2, sort_keys=True)
-    os.replace(tmp_path, STATE_PATH)
+    AtomicJSON(STATE_PATH).write(state)
+
+
+def _parse_iso_ts(v: Any) -> Optional[float]:
+    """Parse ISO timestamp string (or epoch) -> epoch seconds. Returns None on failure."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        try:
+            return float(v)
+        except Exception:
+            return None
+    if not isinstance(v, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(v)
+        return dt.timestamp()
+    except Exception:
+        return None
 
 
 def record_agg5_heartbeat() -> None:
@@ -60,19 +77,65 @@ def record_agg5_heartbeat() -> None:
     state = _read_state()
     health_dict = state.get(_HEALTH_KEY, {})
     health = HealthState.from_dict(health_dict)
+
+    # Fallback: if last_batch_ts missing but batch_agent.last_heartbeat_ts exists, derive it.
+    if health.last_batch_ts is None:
+        try:
+            ba = state.get("batch_agent") or {}
+            ts = ba.get("last_heartbeat_ts")
+            if isinstance(ts, str) and ts:
+                dt = __import__("datetime").datetime.fromisoformat(ts)
+                health.last_batch_ts = dt.timestamp()
+        except Exception:
+            pass
     health.last_agg5_ts = now
     state[_HEALTH_KEY] = asdict(health)
     _atomic_write_state(state)
 
 
-def record_batch_agent_heartbeat() -> None:
-    """Called by ops.batch_agent whenever it successfully runs a loop."""
+def record_batch_agent_heartbeat(
+    agent: str = "batch_agent",
+    status: str = "RUNNING",
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Heartbeat for Phase A / batch loop.
+
+    Backward compatible:
+      - old callers: record_batch_agent_heartbeat()
+      - new callers: record_batch_agent_heartbeat(agent, status, extra)
+
+    Side effects:
+      - updates state["health"]["last_batch_ts"]
+      - updates state["batch_agent"]["last_heartbeat_ts"] (ISO)
+    """
+    from datetime import datetime, timezone, timedelta
+
+    IST = timezone(timedelta(hours=5, minutes=30))
+
     now = time.time()
     state = _read_state()
+
+    # health block
     health_dict = state.get(_HEALTH_KEY, {})
     health = HealthState.from_dict(health_dict)
     health.last_batch_ts = now
     state[_HEALTH_KEY] = asdict(health)
+
+    # batch_agent block (UI/debug)
+    ba = state.get("batch_agent")
+    if not isinstance(ba, dict):
+        ba = {}
+    ba["status"] = status
+    ba["phase"] = ba.get("phase") or "PHASE_A"
+    ba["agent"] = agent
+    ba["last_heartbeat_ts"] = datetime.now(tz=IST).isoformat(timespec="seconds")
+
+    if isinstance(extra, dict) and extra:
+        # Keep it minimal / stable
+        if isinstance(extra.get("details"), str):
+            ba["details"] = extra["details"]
+
+    state["batch_agent"] = ba
     _atomic_write_state(state)
 
 
@@ -112,6 +175,17 @@ def assess_health(max_bar_lag_sec: int = 600, max_plan_lag_sec: int = 600) -> He
         notes.append("agg5 disabled via ENABLE_AGG5=false")
 
     # --- batch_agent check (always required) ---
+    # fallback to state["batch_agent"]["last_heartbeat_ts"] if health.last_batch_ts missing
+    if health.last_batch_ts is None:
+        try:
+            ba = state.get("batch_agent") or {}
+            if isinstance(ba, dict):
+                fb = _parse_iso_ts(ba.get("last_heartbeat_ts"))
+                if fb is not None:
+                    health.last_batch_ts = fb
+        except Exception:
+            pass
+
     if health.last_batch_ts is None:
         problems.append("batch_agent has never reported")
     else:

@@ -203,8 +203,15 @@ def tick_stream(symbols: Iterable[str] | None = None) -> Iterator[List[Tuple[str
     kws.connect(threaded=True, disable_ssl_verification=False)
 
     # Main consumer loop
+    # IMPORTANT: do not block forever. The 5-min aggregator must be able
+    # to flush bars on wall-clock boundaries even during brief tick gaps.
     while True:
-        first = q.get()  # blocking
+        try:
+            first = q.get(timeout=1.0)
+        except queue.Empty:
+            yield []
+            continue
+
         batch: List[Tuple[str, float, float]] = [first]
 
         # Drain any extra ticks

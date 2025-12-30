@@ -2,20 +2,25 @@ import pandas as pd
 from probedge.core import classifiers as C
 from pathlib import Path
 from probedge.infra.settings import SETTINGS
+from probedge.storage.resolver import ALIASES
 
 def _intraday_path(sym: str) -> Path:
     raw = str(getattr(SETTINGS.paths, 'intraday', 'data/intraday'))
     if '{sym}' in raw:
         return Path(raw.format(sym=sym))
     p = Path(raw)
-    return p if p.suffix.lower()=='.csv' else p / f"{sym}_5minute.csv"
+    file_sym = ALIASES.get(sym.upper(), sym.upper())
+    return p if p.suffix.lower()=='.csv' else p / f"{file_sym}_5minute.csv"
+
 
 def _master_path(sym: str) -> Path:
     raw = str(getattr(SETTINGS.paths, 'master', 'data/masters'))
     if '{sym}' in raw:
         return Path(raw.format(sym=sym))
     p = Path(raw)
-    return p if p.suffix.lower()=='.csv' else p / f"{sym}_5MINUTE_MASTER.csv"
+    file_sym = ALIASES.get(sym.upper(), sym.upper())
+    return p if p.suffix.lower()=='.csv' else p / f"{file_sym}_5MINUTE_MASTER.csv"
+
 
 BASE_PATHS = getattr(SETTINGS, 'paths', None)
 INTRA = Path(getattr(BASE_PATHS, 'intraday', 'data/intraday'))

@@ -24,11 +24,13 @@ from __future__ import annotations
 
 import argparse
 import threading
+import os
 import time
 from datetime import date, datetime, time as dtime
 from typing import Optional, Sequence
 
 from probedge.infra.settings import SETTINGS
+from probedge.infra.health import record_batch_agent_heartbeat, assess_health
 from probedge.infra.logger import get_logger
 from probedge.realtime.agg5 import run_agg
 from apps.runtime.intraday_paper import run_intraday_paper_loop
@@ -131,6 +133,61 @@ def _start_intraday_paper_thread(
 
 # -------- entrypoint --------
 
+def _reset_live_state_for_day(day_iso: str) -> None:
+    """Stamp the live_state day and clear stale plan + paper state.
+
+    Key rule: if the requested day differs from what's currently in live_state,
+    we wipe plan_snapshot/portfolio_plan and paper bookkeeping so we never
+    accidentally operate on stale plans.
+    """
+    try:
+        from probedge.infra.settings import SETTINGS
+        from probedge.storage.atomic_json import AtomicJSON
+
+        aj = AtomicJSON(SETTINGS.paths.state)
+        st = aj.read(default={}) or {}
+
+        prev_day = (st.get("plan_day") or st.get("date") or "").strip()
+        pp = st.get("portfolio_plan")
+        pp_day = (pp.get("day") if isinstance(pp, dict) else "") or ""
+        if pp_day and pp_day != day_iso:
+            prev_day = pp_day  # treat as stale
+
+        patch = {
+            "date": day_iso,
+            "plan_day": day_iso,
+            # Force LIVE clock mode on day-start; stale SIM flags can freeze gating.
+            "sim": False,
+            "sim_clock": None,
+        }
+
+        if prev_day and prev_day != day_iso:
+            patch.update({
+                "plan_snapshot": None,
+                "portfolio_plan": None,
+                "positions": {},
+                "pnl": {},
+                "risk": {},
+                "tags": {},
+            })
+        else:
+            # If plan_snapshot exists but is for another day, still clear.
+            ps = st.get("plan_snapshot")
+            if isinstance(ps, dict) and ps.get("day") and ps.get("day") != day_iso:
+                patch.update({
+                    "plan_snapshot": None,
+                    "portfolio_plan": None,
+                    "positions": {},
+                    "pnl": {},
+                    "risk": {},
+                    "tags": {},
+                })
+
+        aj.write(patch)
+    except Exception:
+        return
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -166,15 +223,21 @@ def main() -> None:
         help="If set, do NOT start live agg5 (use only for past-day / TM5 already built).",
     )
     args = parser.parse_args()
+    from probedge.infra.clock_source import now_ist
 
-    day = args.day or date.today().isoformat()
+    day = args.day or now_ist().date().isoformat()
+
+    # reset live_state.json for the requested trading day (clear stale plan_snapshot/portfolio_plan)
+    _reset_live_state_for_day(day)
     risk_rs: Optional[int] = args.risk
 
     symbols = SETTINGS.symbols
     log.info("Phase A (paper) starting for day=%s symbols=%s", day, symbols)
 
     # 1) Start live 5-minute aggregator unless skipped
-    if args.skip_agg:
+    enable_agg5 = os.getenv("ENABLE_AGG5", "true").strip().lower() not in ("0","false","no")
+
+    if args.skip_agg or (not enable_agg5):
         log.info("Skipping agg5 (--skip-agg set). Assuming TM5 already present for day=%s", day)
         agg_thread = None
     else:
@@ -218,6 +281,21 @@ def main() -> None:
     # 4) Main thread just stays alive until Ctrl+C
     try:
         while True:
+            try:
+                record_batch_agent_heartbeat(
+                    agent='phase_a',
+                    status='RUNNING',
+                    extra={'details': 'phase_a alive'},
+                )
+            except Exception:
+                pass
+
+            # recompute system_status/reason (state_raw reads stored health)
+            try:
+                assess_health()
+            except Exception:
+                pass
+
             time.sleep(30)
     except KeyboardInterrupt:
         log.info("Phase A runner interrupted by user; shutting down.")

@@ -7,15 +7,24 @@ def read_tm5_csv(path) -> pd.DataFrame:
     # --- normalize DateTime ---
     cols_lower = {c.lower(): c for c in df.columns}
     dt = None
-    for key in ("datetime", "date_time", "timestamp", "date"):
+
+    # 1) Prefer fully-qualified datetime-like columns
+    for key in ("datetime", "date_time", "timestamp"):
         if key in cols_lower:
             dt = pd.to_datetime(df[cols_lower[key]], errors="coerce")
             break
+
+    # 2) If we have separate date + time, combine them
     if dt is None and ("date" in cols_lower and "time" in cols_lower):
         dt = pd.to_datetime(
             df[cols_lower["date"]].astype(str) + " " + df[cols_lower["time"]].astype(str),
             errors="coerce",
         )
+
+    # 3) Fallback: date-only column
+    if dt is None and "date" in cols_lower:
+        dt = pd.to_datetime(df[cols_lower["date"]], errors="coerce")
+
     if dt is None:
         raise ValueError(f"No recognizable datetime column in {path}")
 

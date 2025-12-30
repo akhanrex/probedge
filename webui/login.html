@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Probedge – Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050814;
+      --bg-card: #0b1020;
+      --bg-card-soft: #101629;
+      --accent: #4f46e5;
+      --accent-soft: rgba(79, 70, 229, 0.12);
+      --accent-strong: rgba(129, 140, 248, 0.3);
+      --danger: #f97373;
+      --success: #22c55e;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --border-subtle: #1f2933;
+      --radius-xl: 18px;
+      --shadow-soft: 0 22px 60px rgba(0, 0, 0, 0.55);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(79, 70, 229, 0.25), transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(16, 185, 129, 0.18), transparent 55%),
+        var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .page {
+      max-width: 480px;
+      width: 100%;
+    }
+
+    .logo-wrap {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .logo-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: radial-gradient(circle at 0% 0%, #4f46e5, #0ea5e9);
+      box-shadow: 0 12px 35px rgba(79, 70, 229, 0.6);
+      margin-bottom: 10px;
+    }
+
+    .logo-mark span {
+      font-weight: 700;
+      font-size: 22px;
+      color: white;
+    }
+
+    .logo-text {
+      font-size: 24px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+
+    .logo-tagline {
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .card {
+      background: linear-gradient(145deg, var(--bg-card), #050816);
+      border-radius: var(--radius-xl);
+      padding: 22px 22px 18px;
+      box-shadow: var(--shadow-soft);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 0 0, var(--accent-strong), transparent 55%);
+      opacity: 0.45;
+      mix-blend-mode: soft-light;
+      pointer-events: none;
+    }
+
+    .card-inner {
+      position: relative;
+      z-index: 1;
+    }
+
+    .headline {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      gap: 8px;
+    }
+
+    .headline-main {
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    .headline-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #6b7280;
+    }
+
+    .dot.ok {
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25);
+    }
+
+    .dot.warn {
+      background: #facc15;
+      box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.25);
+    }
+
+    .dot.err {
+      background: var(--danger);
+      box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.25);
+    }
+
+    .meta-grid {
+      margin: 10px 0 16px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      font-size: 11px;
+    }
+
+    .meta-item {
+      padding: 7px 8px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(51, 65, 85, 0.7);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-height: 44px;
+    }
+
+    .meta-label {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 10px;
+      color: #6b7280;
+    }
+
+    .meta-value {
+      font-size: 12px;
+      color: #e5e7eb;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .meta-value.muted {
+      color: #4b5563;
+      font-weight: 400;
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .btn {
+      flex: 1;
+      min-width: 140px;
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: transform 0.08s ease-out, box-shadow 0.12s ease-out,
+        background 0.12s ease-out, border-color 0.12s ease-out;
+    }
+
+    .btn-primary {
+      background: radial-gradient(circle at 0 0, #22c55e, var(--accent));
+      color: white;
+      box-shadow: 0 14px 35px rgba(79, 70, 229, 0.7);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 48px rgba(79, 70, 229, 0.9);
+    }
+
+    .btn-primary:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 10px 28px rgba(79, 70, 229, 0.75);
+    }
+
+    .btn-secondary {
+      background: rgba(15, 23, 42, 0.9);
+      color: #e5e7eb;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: rgba(15, 23, 42, 0.98);
+      border-color: rgba(209, 213, 219, 0.8);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+
+    .hint code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+      background: rgba(15, 23, 42, 0.85);
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-size: 11px;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      color: #e5e7eb;
+    }
+
+    .message {
+      min-height: 16px;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .message.error {
+      color: var(--danger);
+    }
+
+    .footer {
+      margin-top: 8px;
+      text-align: center;
+      font-size: 11px;
+      color: #6b7280;
+    }
+
+    .footer span {
+      color: #9ca3af;
+    }
+
+    /* App PIN card tweaks */
+    .pin-input-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pin-input-row input {
+      flex: 1;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      background: rgba(15, 23, 42, 0.85);
+      color: var(--text-main);
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .pin-input-row input::placeholder {
+      color: #6b7280;
+    }
+
+    .pin-input-row input:focus {
+      border-color: rgba(129, 140, 248, 0.9);
+      box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.8);
+    }
+
+    .message.pin-error {
+      margin-top: 6px;
+    }
+
+    #kiteSection.locked {
+      filter: blur(3px);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    @media (max-width: 480px) {
+      .card {
+        padding: 18px 14px 14px;
+      }
+      .meta-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="logo-wrap">
+      <div class="logo-mark">
+        <span>P</span>
+      </div>
+      <div class="logo-text">PROBEDGE</div>
+      <div class="logo-tagline">Intraday Parity Terminal</div>
+    </div>
+
+    <!-- App PIN card -->
+    <div class="card">
+      <div class="card-inner">
+        <div class="headline">
+          <div>
+            <div class="headline-main">App Lock</div>
+            <div class="headline-sub">Enter Probedge PIN to unlock trading.</div>
+          </div>
+        </div>
+        <div class="pin-input-row">
+          <input
+            id="appPinInput"
+            type="password"
+            maxlength="16"
+            autocomplete="off"
+            placeholder="Enter app PIN"
+          />
+          <button class="btn btn-secondary" id="unlockBtn">Unlock</button>
+        </div>
+        <div class="message pin-error" id="pinMessage"></div>
+      </div>
+    </div>
+
+    <!-- Kite / terminal card -->
+    <div class="card" id="kiteSection">
+      <div class="card-inner">
+        <div class="headline">
+          <div>
+            <div class="headline-main">Kite Connection</div>
+            <div class="headline-sub">Authorize once every morning before 09:20</div>
+          </div>
+          <div class="status-pill">
+            <span class="dot" id="authDot"></span>
+            <span id="authStatusLabel">Locked</span>
+          </div>
+        </div>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <div class="meta-label">Today</div>
+            <div class="meta-value" id="todayValue">–</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Mode</div>
+            <div class="meta-value" id="modeValue">–</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Kite User</div>
+            <div class="meta-value muted" id="userValue">Locked</div>
+          </div>
+        </div>
+
+        <div class="buttons">
+          <button class="btn btn-primary" id="connectBtn" disabled>
+            <span id="connectBtnLabel">Connect with Kite</span>
+          </button>
+          <button class="btn btn-secondary" id="openTerminalBtn" disabled>
+            Open Probedge Terminal
+          </button>
+        </div>
+
+        <div class="hint">
+          Terminal URL:
+          <code>http://127.0.0.1:9002</code>
+        </div>
+        <div class="message" id="message"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>Phase A · Data & tags auto-updated via intraday 5-min pipeline.</span>
+    </div>
+  </div>
+
+  <script src="/webui-static/js/login.js" defer></script>
+</body>
+</html>

@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 from datetime import datetime
-
+from pathlib import Path
 import pandas as pd
 
 from probedge.infra.logger import get_logger
 from probedge.infra.settings import SETTINGS
 from probedge.backtest.exec_adapter import simulate_trade_colab_style
+
 
 def _dt_to_iso(val: object) -> str:
     """Convert numpy.datetime64 / Timestamp / None to ISO string safely."""
@@ -29,8 +30,8 @@ log = get_logger(__name__)
 def run_paper_exec_for_day(day_str: str):
     day = pd.to_datetime(day_str).normalize()
 
-    journal_path = "data/journal/journal.csv"
-    fills_path   = "data/journal/fills.csv"
+    journal_path = Path("data/journal/journal.csv")
+    fills_path   = Path("data/journal/fills.csv")
 
     journal = pd.read_csv(journal_path)
     journal["day"] = pd.to_datetime(journal["day"]).dt.normalize()

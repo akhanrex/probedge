@@ -9,6 +9,45 @@ async function getJSON(url) {
   return res.json();
 }
 
+function setSelectOptions(selectEl, values, { keepValue = true, allLabel = "All" } = {}) {
+  if (!selectEl) return;
+  const prev = keepValue ? selectEl.value : "ALL";
+  selectEl.innerHTML = "";
+
+  const optAll = document.createElement("option");
+  optAll.value = "ALL";
+  optAll.textContent = allLabel;
+  selectEl.appendChild(optAll);
+
+  for (const v of values) {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = v;
+    selectEl.appendChild(opt);
+  }
+
+  if (keepValue && prev && Array.from(selectEl.options).some(o => o.value === prev)) {
+    selectEl.value = prev;
+  } else {
+    selectEl.value = "ALL";
+  }
+}
+
+async function populateSymbolsFromConfig() {
+  const symSelect = document.getElementById("filterSymbol");
+  if (!symSelect) return;
+  try {
+    const cfg = await getJSON("/api/config");
+    const syms = (cfg && Array.isArray(cfg.symbols) ? cfg.symbols : [])
+      .map(s => String(s).toUpperCase().trim())
+      .filter(Boolean);
+    setSelectOptions(symSelect, syms, { allLabel: "All" });
+  } catch (err) {
+    console.error("Failed to populate symbols from /api/config:", err);
+    // Keep existing select state (at minimum it contains ALL)
+  }
+}
+
 async function ensureAuthOrRedirect() {
   const overlay = document.getElementById("authOverlay");
   try {
@@ -149,6 +188,9 @@ async function loadJournal() {
   const authOk = await ensureAuthOrRedirect();
   if (!authOk) return;
 
+  // Universe knob: symbols come from /api/config (frequency.yaml)
+  await populateSymbolsFromConfig();
+
   // Basic meta + health for header
   let meta = {};
   let health = {};
@@ -164,6 +206,9 @@ async function loadJournal() {
   } catch (err) {
     console.error("Failed to load /api/health:", err);
   }
+
+  // Single knob: symbol list is always driven by backend settings (/api/config -> frequency.yaml)
+  await populateSymbolsFromConfig();
 
   // Default range = 30d
   const filterRange = document.getElementById("filterRange");

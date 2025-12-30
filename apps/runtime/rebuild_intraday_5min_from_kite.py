@@ -1,17 +1,30 @@
 from __future__ import annotations
+
+import os
 import json
 from datetime import date, datetime, timedelta
+
+from datetime import timedelta
+
+def _last_weekday(d):
+    # Sat/Sun -> roll back to Friday
+    while d.weekday() >= 5:
+        d = d - timedelta(days=1)
+    return d
 from pathlib import Path
 
 import pandas as pd
 from kiteconnect import KiteConnect
 
+
 from probedge.infra.settings import SETTINGS
 from probedge.storage.resolver import intraday_path
 
 TOKENS_PATH = Path("data/tokens_5min.csv")
-# how many calendar days of intraday we refresh
-N_DAYS = 180
+
+# how many calendar days of intraday we refresh (default 10, can override via env)
+DEFAULT_DAYS_BACK = 10
+N_DAYS = int(os.environ.get("PROBEDGE_INTRADAY_DAYS_BACK", DEFAULT_DAYS_BACK))
 
 SESSION_START = "09:15:00"   # keep full trading session from here
 
@@ -23,18 +36,34 @@ def make_kite() -> KiteConnect:
 
     sess_file = SETTINGS.kite_session_file
     if not sess_file or not sess_file.exists():
-        raise RuntimeError(f"Kite session file not found: {sess_file}")
+        raise RuntimeError(
+            f"Kite session file not found: {sess_file}. "
+            "Please login via /api/auth/login_url in your browser."
+        )
 
     with sess_file.open("r", encoding="utf-8") as f:
         sess = json.load(f)
 
     access_token = sess.get("access_token")
     if not access_token:
-        raise RuntimeError("Kite session file has no access_token")
+        raise RuntimeError(
+            "Kite session file has no access_token. "
+            "Please login again via /api/auth/login_url."
+        )
+
+    session_day = str(sess.get("session_day") or "")
+    today = _last_weekday(_last_weekday(date.today())).isoformat()
+    today = date.today().isoformat()  # calendar day for Kite session validity
+    if session_day != today:
+        raise RuntimeError(
+            f"Kite session is stale (session_day={session_day}, today={today}). "
+            "Please login via /api/auth/login_url in your browser."
+        )
 
     kite = KiteConnect(api_key=api_key)
     kite.set_access_token(access_token)
     return kite
+
 
 
 def load_tokens():
@@ -104,7 +133,11 @@ def refresh_symbol(sym: str, kite: KiteConnect, instrument_token: int, cutoff: d
                 break
 
         if date_col:
-            cur["date"] = pd.to_datetime(cur[date_col]).dt.date
+            # Some older rows may have full ISO datetimes like 2025-12-08T11:20:00+05:30.
+            # Normalize by taking only the "YYYY-MM-DD" part before parsing.
+            raw_date = cur[date_col].astype(str).str.slice(0, 10)
+            cur["date"] = pd.to_datetime(raw_date, errors="coerce").dt.date
+            cur = cur.dropna(subset=["date"])
             keep = cur[cur["date"] < cutoff].copy()
             print(f"[intraday] {sym}: keeping {len(keep)} old rows (< {cutoff})")
         else:
@@ -119,7 +152,7 @@ def refresh_symbol(sym: str, kite: KiteConnect, instrument_token: int, cutoff: d
         print(f"[intraday] {sym}: no existing file, starting fresh")
 
 
-    today = date.today()
+    today = _last_weekday(_last_weekday(date.today()))
     print(f"[intraday] {sym}: fetching 5min from {cutoff} to {today}…")
     new = fetch_5min_from_kite(kite, instrument_token, start=cutoff, end=today)
     print(f"[intraday] {sym}: fetched {len(new)} new rows")
@@ -140,7 +173,7 @@ def main():
     kite = make_kite()
     tokens = load_tokens()
 
-    today = date.today()
+    today = _last_weekday(_last_weekday(date.today()))
     cutoff = today - timedelta(days=N_DAYS)
     print(f"[intraday] Refreshing last {N_DAYS} days from {cutoff} to {today}")
 
