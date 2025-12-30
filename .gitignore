@@ -25,3 +25,26 @@ data/*
 /data/import/
 /data/ticks/
 /data/state/
+
+# ---- Local runtime / data (never commit) ----
+data/
+logs/
+
+# ---- Secrets / auth ----
+.env
+kite_session.json
+data/config/kite_tokens.json
+
+# ---- Python / build junk ----
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ---- Backup files ----
+*.BAK_*
+*.bak*
+*.save
+*.BROKEN_*
