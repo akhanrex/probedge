@@ -48,3 +48,5 @@ __pycache__/
 *.bak*
 *.save
 *.BROKEN_*
+
+.venv
