@@ -76,7 +76,7 @@ def publish_tags_only(day: str, risk_rs: Optional[int] = None) -> None:
     if risk_rs is None:
         risk_rs = int(state.get("daily_risk_rs") or 10000)
 
-    ps = build_portfolio_state_for_day(Date.fromisoformat(day), risk_rs=risk_rs)
+    ps = _build_portfolio_state_for_day_compat(Date.fromisoformat(day), risk_rs=risk_rs)
     tags_by_sym: Dict[str, Any] = {}
     for plan in ps.get("plans", []) or []:
         sym = plan.get("symbol")
@@ -105,6 +105,19 @@ def arm_portfolio_for_day(day: str, risk_rs: Optional[int] = None, wait_for_time
     snap_path = _plan_snapshot_path(day)
     if snap_path.exists():
         snapshot = json.loads(snap_path.read_text(encoding="utf-8"))
+
+        # Enforce executor contract on archived snapshots (idempotent)
+        snapshot["locked"] = True
+        pp = snapshot.get("portfolio_plan") or snapshot.get("portfolio_plan_state") or {}
+        if not isinstance(pp, dict):
+            pp = {}
+        pp.setdefault("plans", snapshot.get("plans", []) or [])
+        pp["plan_locked"] = True
+        pp.setdefault("active_trades", int(snapshot.get("active_trades") or len(pp.get("plans") or [])))
+        pp.setdefault("risk_per_trade_rs", int(snapshot.get("risk_per_trade_rs") or 0))
+        pp.setdefault("daily_risk_rs", int(snapshot.get("daily_risk_rs") or 0))
+        snapshot["portfolio_plan"] = pp
+
         # Ensure snapshot has READY fields (UI + exec gating)
         if "status" not in snapshot:
             snapshot["status"] = "READY" if snapshot.get("locked") else "BUILDING"
@@ -112,7 +125,7 @@ def arm_portfolio_for_day(day: str, risk_rs: Optional[int] = None, wait_for_time
             snapshot["built_at"] = snapshot.get("created_at_ist") or now_ist().isoformat()
         # keep archive up-to-date so UI sees READY
         _archive_snapshot(day, snapshot)
-        portfolio_plan = snapshot.get("portfolio_plan") or snapshot.get("portfolio_plan_state") or {}
+        portfolio_plan = snapshot["portfolio_plan"]
         aj.write(
             {
                 "date": day,

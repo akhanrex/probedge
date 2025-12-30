@@ -120,6 +120,7 @@ def _build_initial_positions(portfolio_plan: Dict[str, Any]) -> Dict[str, Dict[s
         stop = _get_float(plan, ["stop", "sl", "SL", "Stop", "SL_price"])
         t1 = _get_float(plan, ["t1", "T1", "target1", "Target1", "T1_price"], default=None)
         t2 = _get_float(plan, ["t2", "T2", "target2", "Target2", "T2_price"], default=None)
+        exit_at = str(plan.get("exit_at") or plan.get("exit_rule") or "").strip() or "R2"
 
         if entry is None or stop is None:
             # Without entry/stop, we cannot sensibly simulate this symbol
@@ -137,6 +138,7 @@ def _build_initial_positions(portfolio_plan: Dict[str, Any]) -> Dict[str, Dict[s
             "stop_price": float(stop),
             "t1_price": t1,
             "t2_price": t2,
+            "exit_at": exit_at,
             "exit_price": None,
             "exit_time": None,
             "exit_reason": None,
@@ -151,24 +153,89 @@ def _build_initial_positions(portfolio_plan: Dict[str, Any]) -> Dict[str, Dict[s
 
 
 def _get_ltp(symbol: str, state: Dict[str, Any]) -> float | None:
-    """Read last traded price from state["quotes"][symbol]."""
+    # SIM: use last_closed close as the LTP stream (bar-based replay)
+    if bool(state.get("sim")):
+        lc = (state.get("last_closed") or {}).get(symbol) or {}
+        v = lc.get("c")
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+
     q = (state.get("quotes") or {}).get(symbol) or {}
-    for key in ("ltp", "last_price"):
+  
+    # direct LTP keys
+    for key in ("ltp", "last_price", "LTP", "LastPrice"):
         v = q.get(key)
         if v is None:
             continue
         try:
             return float(v)
         except (TypeError, ValueError):
+            pass
+
+    # fallback: ohlc close
+    ohlc = q.get("ohlc")
+    if isinstance(ohlc, dict):
+        for key in ("c", "close", "C"):
+            v = ohlc.get(key)
+            if v is None:
+                continue
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+
+    # fallback: quote root close
+    for key in ("c", "close", "C"):
+        v = q.get(key)
+        if v is None:
             continue
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            pass
+
     return None
 
 
+
+
 def _get_ohlc(symbol: str, state: Dict[str, Any]) -> Dict[str, Any] | None:
-    """Read 5-minute OHLC from state["quotes"][symbol]["ohlc"]."""
+    # SIM: trust last_closed bar OHLC (replay writes this correctly)
+    if bool(state.get("sim")):
+        lc = (state.get("last_closed") or {}).get(symbol) or {}
+        if isinstance(lc, dict) and all(k in lc for k in ("o","h","l","c")):
+            return lc
     q = (state.get("quotes") or {}).get(symbol) or {}
+
+    # Preferred schema: quotes[sym]['ohlc'] = {o,h,l,c}
     ohlc = q.get("ohlc")
-    return ohlc if isinstance(ohlc, dict) else None
+    if isinstance(ohlc, dict):
+        return ohlc
+
+    # Alternate schema: quotes[sym] directly has o/h/l/c
+    if isinstance(q, dict):
+        def pick(*ks):
+            for k in ks:
+                if k in q and q.get(k) is not None:
+                    return q.get(k)
+            return None
+        o = pick("o","open","O")
+        h = pick("h","high","H")
+        l = pick("l","low","L")
+        c = pick("c","close","C")
+        if o is not None and h is not None and l is not None and c is not None:
+            return {"o": o, "h": h, "l": l, "c": c}
+
+    # Fallback: last_closed bar (from agg5)
+    lc = (state.get("last_closed") or {}).get(symbol) or {}
+    if isinstance(lc, dict) and all(k in lc for k in ("o","h","l","c")):
+        return lc
+
+    return None
+
 def _update_position_pnl(pos: Dict[str, Any], ltp: float | None) -> None:
     # Only OPEN positions have live open P&L; everything else is 0.
     if pos.get("status") != "OPEN" or ltp is None:
@@ -212,17 +279,6 @@ def _current_dt_from_state(now: datetime, state: Dict[str, Any]) -> datetime | N
 
 
 def _current_bar_index(current_dt: datetime | None) -> int | None:
-    """
-    Map current time to a TM5 bar index (1-based):
-
-      bar 1: 09:15–09:20
-      bar 2: 09:20–09:25
-      bar 3: 09:25–09:30
-      bar 4: 09:30–09:35
-      bar 5: 09:35–09:40
-      ...
-      bar 10: 10:00–10:05
-    """
     if current_dt is None:
         return None
     t = current_dt.time()
@@ -231,9 +287,13 @@ def _current_bar_index(current_dt: datetime | None) -> int | None:
     if minutes < 0:
         return None
 
-    # 09:15–09:20 → minutes in [0..4] → bar 1
-    # 09:20–09:25 → minutes in [5..9] → bar 2
+    # ✅ Boundary fix: if time is exactly on a 5-min boundary (and not 09:15),
+    # treat it as the CLOSE of the previous bar in SIM/replay.
+    if minutes > 0 and (minutes % 5 == 0) and getattr(t, "second", 0) == 0:
+        minutes -= 1
+
     return 1 + (minutes // 5)
+
 
 
 
@@ -293,14 +353,7 @@ def _update_ladder_trigger(symbol: str, pos: Dict[str, Any], state: Dict[str, An
         pos["pending_entry_px"] = new_trigger
         pos["ladder_ref_bar"] = min(bar_index - 1, 10)
 
-        # For UI, also keep plan.entry in sync with the ladder trigger
-        symbols = state.get("symbols") or {}
-        info = symbols.get(symbol) or {}
-        plan = info.get("plan") or {}
-        plan["entry"] = new_trigger
-        info["plan"] = plan
-        symbols[symbol] = info
-        state["symbols"] = symbols
+        # UI-sync disabled: do not mutate state['symbols']; UI should read positions.pending_entry_px
 
 
 def _maybe_open_position(
@@ -363,58 +416,58 @@ def _maybe_open_position(
 
 
 
-def _maybe_close_position(pos: Dict[str, Any], ltp: float) -> None:
-    """
-    Exit logic:
-      - Keep SL as-is.
-      - Ignore T1 completely (no partial exits).
-      - Take full exit only at T2.
-      - If neither SL nor T2 hit, EOD logic will close the trade.
-    """
+def _maybe_close_position(symbol: str, pos: Dict[str, Any], state: Dict[str, Any], ltp: float) -> None:
     if pos.get("status") != "OPEN":
         return
 
     side: SideT = pos["side"]
     stop = float(pos["stop_price"])
+    t1 = pos.get("t1_price")
     t2 = pos.get("t2_price")
+    exit_at = str(pos.get("exit_at") or "R2").upper().strip()
 
-    exit_reason = None
-
-    if side == "LONG":
-        # SL first
-        if ltp <= stop:
-            exit_reason = "SL"
-        # Then only T2
-        elif t2 is not None and ltp >= float(t2):
-            exit_reason = "T2"
-    else:  # SHORT
-        # SL first
-        if ltp >= stop:
-            exit_reason = "SL"
-        # Then only T2
-        elif t2 is not None and ltp <= float(t2):
-            exit_reason = "T2"
-
-    if exit_reason is None:
-        return
-
-    entry = float(pos["entry_price"])
-    qty = int(pos.get("qty") or 0)
-
-    if qty <= 0:
-        pnl = 0.0
+    target = None
+    if exit_at in ("R1", "T1"):
+        target = float(t1) if t1 is not None else None
     else:
-        if side == "LONG":
-            pnl = (ltp - entry) * qty
-        else:
-            pnl = (entry - ltp) * qty
+        target = float(t2) if t2 is not None else None
 
-    pos["status"] = "CLOSED"
-    pos["exit_price"] = ltp
-    pos["exit_time"] = datetime.now().isoformat()
-    pos["exit_reason"] = exit_reason
-    pos["realized_pnl_rs"] = pnl
-    pos["open_pnl_rs"] = 0.0  # no open P&L after close
+    # SIM: use last_closed HIGH/LOW to detect hits inside the bar
+    bar_hi = bar_lo = None
+    if bool(state.get("sim")):
+        lc = (state.get("last_closed") or {}).get(symbol) or {}
+        try:
+            bar_hi = float(lc.get("h")) if lc.get("h") is not None else None
+            bar_lo = float(lc.get("l")) if lc.get("l") is not None else None
+        except Exception:
+            bar_hi = bar_lo = None
+
+    def exit_at_price(reason: str, px: float):
+        entry = float(pos["entry_price"])
+        qty = int(pos.get("qty") or 0)
+        if qty <= 0:
+            pnl = 0.0
+        else:
+            pnl = (px - entry) * qty if side == "LONG" else (entry - px) * qty
+        pos["status"] = "CLOSED"
+        pos["exit_price"] = px
+        pos["exit_time"] = datetime.now().isoformat()
+        pos["exit_reason"] = reason
+        pos["realized_pnl_rs"] = pnl
+        pos["open_pnl_rs"] = 0.0
+
+    # Determine hits (use hi/lo in SIM; else fallback to ltp)
+    if side == "LONG":
+        if (bar_lo is not None and bar_lo <= stop) or (bar_lo is None and ltp <= stop):
+            return exit_at_price("SL", stop)
+        if target is not None and ((bar_hi is not None and bar_hi >= target) or (bar_hi is None and ltp >= target)):
+            return exit_at_price("T1" if exit_at in ("R1","T1") else "T2", target)
+    else:  # SHORT
+        if (bar_hi is not None and bar_hi >= stop) or (bar_hi is None and ltp >= stop):
+            return exit_at_price("SL", stop)
+        if target is not None and ((bar_lo is not None and bar_lo <= target) or (bar_lo is None and ltp <= target)):
+            return exit_at_price("T1" if exit_at in ("R1","T1") else "T2", target)
+
 
 
 def _maybe_eod_close(pos: Dict[str, Any], ltp: float) -> None:
@@ -565,8 +618,8 @@ def run_intraday_paper_loop(poll_seconds: float = 2.0) -> None:
     print(f"intraday_paper: starting for {date}, positions={len(positions)} (gate={gate.status}, locked={gate.plan_locked})")
 
     while True:
-        now = get_now_ist(state)
         state = load_state()  # pull latest quotes + sim_clock/etc
+        now = get_now_ist(state)
 
         # Effective clock (SIM vs LIVE) and current bar index
         current_dt = _current_dt_from_state(now, state)
@@ -603,7 +656,7 @@ def run_intraday_paper_loop(poll_seconds: float = 2.0) -> None:
 
             if not after_eod:
                 _maybe_open_position(sym, pos, state, can_open, bar_index)
-                _maybe_close_position(pos, ltp)
+                _maybe_close_position(sym, pos, state, ltp)
                 _maybe_mark_no_fill(pos, bar_index)
             else:
                 # Force close open positions at EOD
@@ -612,34 +665,30 @@ def run_intraday_paper_loop(poll_seconds: float = 2.0) -> None:
         # Recompute risk and P&L after state changes
         risk_state = compute_risk_state(positions, daily_risk_rs, manual_kill)
 
-        # Attach positions/pnl/risk/batch_agent to full state and write
-        state["positions"] = positions
-        state["pnl"] = {
-            # "Rs" keys for backend / tools
-            "realized_rs": risk_state["realized_rs"],
-            "open_rs": risk_state["open_rs"],
-            "day_total_rs": risk_state["day_pnl_rs"],
-            # Aliases for UI (live.js expects these)
-            "realized": risk_state["realized_rs"],
-            "open": risk_state["open_rs"],
-            "day": risk_state["day_pnl_rs"],
+        # PATCH-ONLY write (never write full state back; avoid clobbering other writers)
+        patch_out = {
+            "positions": positions,
+            "pnl": {
+                "realized_rs": risk_state["realized_rs"],
+                "open_rs": risk_state["open_rs"],
+                "day_total_rs": risk_state["day_pnl_rs"],
+                "realized": risk_state["realized_rs"],
+                "open": risk_state["open_rs"],
+                "day": risk_state["day_pnl_rs"],
+            },
+            "risk": risk_state,
+            "batch_agent": {
+                "status": "RUNNING" if not after_eod else "EOD_STOP",
+                "phase": "PHASE_A",
+                "last_heartbeat_ts": now.isoformat(),
+                "details": "intraday_paper+risk active",
+            },
         }
+        if date is not None:
+            patch_out["date"] = date
+        patch_out["daily_risk_rs"] = daily_risk_rs
 
-        state["risk"] = risk_state
-        state["batch_agent"] = {
-            "status": "RUNNING",
-            "phase": "PHASE_A",
-            "last_heartbeat_ts": now.isoformat(),
-            "details": "intraday_paper+risk active",
-        }
-
-        # Ensure top-level date / daily_risk_rs are present for UI and tools
-        if "date" not in state or state.get("date") is None:
-            state["date"] = date
-        if "daily_risk_rs" not in state or state.get("daily_risk_rs") is None:
-            state["daily_risk_rs"] = daily_risk_rs
-
-        save_state(state)
+        save_state(patch_out)
 
         if after_eod:
             print("intraday_paper: EOD reached; stopping loop.")

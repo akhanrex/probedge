@@ -41,18 +41,14 @@ def _write_portfolio_plan_to_state(portfolio_state: Dict[str, Any]) -> Dict[str,
     """
     Persist a portfolio-level plan into live_state.json under key 'portfolio_plan'.
 
-    Also mirrors some key fields at the top level for easier inspection:
-      - plan_day
-      - daily_risk_rs
+    PATCH-ONLY: never overwrite full live_state.json (other writers: agg5, intraday_paper, etc.)
     """
-    state = aj.read(default={}) or {}
-    state["portfolio_plan"] = portfolio_state
-
-    # Convenience mirrors
-    state["plan_day"] = portfolio_state.get("date")
-    state["daily_risk_rs"] = portfolio_state.get("daily_risk_rs")
-
-    aj.write(state)
+    patch = {
+        "portfolio_plan": portfolio_state,
+        "plan_day": portfolio_state.get("date"),
+        "daily_risk_rs": portfolio_state.get("daily_risk_rs"),
+    }
+    aj.write(patch)
     return portfolio_state
 
 
@@ -275,14 +271,19 @@ def _apply_portfolio_split(
 @router.get("/api/state")
 def api_state(
     day: Optional[date] = Query(None),
-    risk: Optional[int] = Query(None, description="Override daily risk budget in rupees"),
+    risk: Optional[int] = Query(None, description="Override daily risk budget in rupees (arms snapshot)"),
+    recompute: int = Query(0, description="DEBUG only: recompute using legacy builder (default 0)"),
 ) -> Dict[str, Any]:
     """
-    State for parity plan for a given day.
+    READ-ONLY plan endpoint (single source of truth).
 
-    If `risk` is provided, we override the daily risk budget and
-    recompute qty + per_trade_risk purely from entry/stop.
-    """    # Read state once (used for stored plan + time gating).
+    - Primary truth: live_state.json["plan_snapshot"] + embedded/paired ["portfolio_plan"].
+    - If missing:
+        - Before 09:40:01 for *today*: return NOT_READY (gated).
+        - After that: return MISSING (do NOT silently compute).
+    - If `risk` is provided: arms (rebuilds) snapshot for that day with that risk, no time-wait.
+    - `recompute=1` is for DEBUG only (legacy parity planner).
+    """
     try:
         live_state: Dict[str, Any] = aj.read(default={}) or {}
     except Exception:
@@ -302,25 +303,27 @@ def api_state(
     else:
         day_str = day.isoformat()
 
-    # If no explicit risk override and we already have a stored portfolio_plan
-    # for this day (written by Phase A / arm_day), return that as single source of truth.
-    if risk is None:
-        portfolio_from_state = live_state.get("portfolio_plan")
-        if isinstance(portfolio_from_state, dict):
-            if portfolio_from_state.get("date") == day_str:
-                out = dict(portfolio_from_state)
+    # If caller provided risk, arm snapshot NOW to avoid drift.
+    if risk is not None:
+        from apps.runtime.daily_timeline import arm_portfolio_for_day
+        arm_portfolio_for_day(day_str, risk_rs=int(risk), wait_for_time=False)
+        live_state = aj.read(default={}) or {}
 
-                # Make UI gating robust even when returning stored plan
-                out.setdefault("plan_locked", True)
-                out.setdefault("plan_status", "READY")
-                out.setdefault("plan_source", "stored")
+    # 1) Prefer stored snapshot/plan only
+    ps = live_state.get("plan_snapshot") or {}
+    pp = live_state.get("portfolio_plan") or ps.get("portfolio_plan") or {}
 
-                return out
+    if isinstance(pp, dict) and (pp.get("plans") is not None):
+        # Make sure day is consistent for the response
+        out = dict(pp)
+        out["date"] = day_str
+        out.setdefault("daily_risk_rs", int(live_state.get("daily_risk_rs") or _effective_daily_risk_rs()))
+        out["plan_locked"] = True
+        out["plan_status"] = "READY"
+        out["plan_source"] = "snapshot"
+        return out
 
-
-
-    # Before 09:40:01, we do NOT publish tradable plans for *today* unless they
-    # were explicitly armed and persisted by Phase A.
+    # 2) Hard gate for *today* before 09:40:01
     if day_str == now_ist.date().isoformat() and now_ist.time() < T_PLAN_READY:
         syms = list(SETTINGS.symbols or [])
         return {
@@ -333,39 +336,43 @@ def api_state(
             "plan_status": "NOT_READY",
             "plan_source": "gated",
             "plans": [
-                {
-                    "symbol": s,
-                    "pick": "PENDING",
-                    "confidence%": 0,
-                    "skip": "plan_not_armed_yet",
-                }
+                {"symbol": s, "pick": "PENDING", "confidence%": 0, "skip": "plan_not_armed_yet"}
                 for s in syms
             ],
         }
-    # 1) Build raw plans
-    raw_plans = _build_raw_plans_for_day(day_str)
+
+    # 3) DEBUG ONLY: legacy recompute if explicitly requested
+    if int(recompute or 0) == 1:
+        raw_plans = _build_raw_plans_for_day(day_str)
+        daily_risk_rs = int(risk) if risk is not None else _effective_daily_risk_rs()
+        portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
+        portfolio_state["date"] = day_str
+        portfolio_state["plan_status"] = "READY_DEBUG"
+        portfolio_state["plan_locked"] = False
+        portfolio_state["plan_source"] = "computed_debug"
+        return portfolio_state
+
+    # 4) Missing snapshot (do NOT compute by default)
+    syms = list(SETTINGS.symbols or [])
+    return {
+        "date": day_str,
+        "mode": SETTINGS.mode,
+        "daily_risk_rs": int(_effective_daily_risk_rs() if risk is None else risk),
+        "active_trades": 0,
+        "risk_per_trade_rs": 0,
+        "total_planned_risk_rs": 0,
+        "plan_status": "MISSING",
+        "plan_source": "missing",
+        "plans": [
+            {"symbol": s, "pick": "PENDING", "confidence%": 0, "skip": "plan_snapshot_missing"}
+            for s in syms
+        ],
+    }
 
 
-    # 2) Decide daily risk
-    if risk is not None:
-        daily_risk_rs = int(risk)
-    else:
-        daily_risk_rs = _effective_daily_risk_rs()
-
-    # 3) Apply portfolio split
-    portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
-
-    # Force portfolio date to requested day
-    portfolio_state["date"] = day_str
-
-    # UI stability fields (computed plan)
-    portfolio_state.setdefault("plan_status", "READY")
-    portfolio_state.setdefault("plan_locked", False)
-    portfolio_state.setdefault("plan_source", "computed")
-
-    return portfolio_state
-
-
+# -------------------------------
+# 3) Live-state + ARM control
+# -------------------------------
 # -------------------------------
 # 3) Live-state + ARM control
 # -------------------------------
@@ -378,25 +385,19 @@ class ArmRequest(BaseModel):
 def api_live_state(
     day: Optional[date] = Query(
         None,
-        description="Day to use for parity plan; defaults to today or sim_day",
+        description="Day to use for plan; defaults to today or sim_day",
     ),
     risk: Optional[int] = Query(
         None,
-        description="Override daily risk budget for parity plan",
+        description="Override daily risk budget (arms snapshot) for this day",
     ),
 ) -> Dict[str, Any]:
     """
-    Merge live quotes from live_state.json with the parity portfolio plan.
+    UI merged view.
 
-    Key rules:
-    - Quotes come from live_state.json["quotes"] (written by agg5).
-    - Tags come from:
-        1) plan["tags"] if present (post-09:40 plan),
-        2) else live_state.json["tags"][sym] (pre-09:40 tags-only stage).
-    - Before 09:40:01 for *today*, DO NOT build/publish tradable plans here.
-      Only show tags + PENDING plan view (unless portfolio_plan already exists).
+    RULE: never compute plans here by default.
+    Source of truth = stored PlanSnapshot/portfolio_plan.
     """
-    # 1) Read live_state.json (quotes + tags)
     live_state: Dict[str, Any] = aj.read(default={}) or {}
     quotes_by_sym: Dict[str, Any] = live_state.get("quotes") or {}
     tags_by_sym: Dict[str, Any] = live_state.get("tags") or {}
@@ -407,7 +408,7 @@ def api_live_state(
 
     now_ist = get_now_ist(live_state)
 
-    # 2) Decide which day to use for the plan
+    # Decide plan day
     if day is not None:
         plan_day = day
     elif sim_day_str:
@@ -417,24 +418,23 @@ def api_live_state(
 
     plan_day_str = plan_day.isoformat()
 
-    # 3) Decide daily risk
-    daily_risk_rs = int(risk) if risk is not None else int(_effective_daily_risk_rs())
+    # If risk provided: arm snapshot now (no wait)
+    if risk is not None:
+        from apps.runtime.daily_timeline import arm_portfolio_for_day
+        arm_portfolio_for_day(plan_day_str, risk_rs=int(risk), wait_for_time=False)
+        live_state = aj.read(default={}) or {}
+        quotes_by_sym = live_state.get("quotes") or {}
+        tags_by_sym = live_state.get("tags") or {}
 
-    # 4) Decide portfolio_state with strict 09:40 gating
-    portfolio_state: Dict[str, Any] | None = None
-    plan_source = "computed"
+    # Load stored plan (snapshot preferred)
+    ps = live_state.get("plan_snapshot") or {}
+    portfolio_state = live_state.get("portfolio_plan") or ps.get("portfolio_plan") or None
 
-    # 4.1) If portfolio_plan already persisted for this day, use it (single source of truth)
-    if risk is None:
-        ps = live_state.get("portfolio_plan")
-        if isinstance(ps, dict) and ps.get("date") == plan_day_str:
-            portfolio_state = dict(ps)
-            portfolio_state.setdefault("plan_locked", True)
-            portfolio_state.setdefault("plan_status", "READY")
-            plan_source = "stored"
+    plan_source = "snapshot"
+    daily_risk_rs = int(live_state.get("daily_risk_rs") or _effective_daily_risk_rs())
 
-    # 4.2) If still None, enforce gating for *today* before 09:40:01
-    if portfolio_state is None:
+    # Gated view before 09:40 for today
+    if not isinstance(portfolio_state, dict):
         if plan_day_str == now_ist.date().isoformat() and now_ist.time() < T_PLAN_READY:
             plan_source = "gated"
             syms = list(SETTINGS.symbols or [])
@@ -447,49 +447,55 @@ def api_live_state(
                 "total_planned_risk_rs": 0,
                 "plan_status": "NOT_READY",
                 "plans": [
-                    {
-                        "symbol": s,
-                        "pick": "PENDING",
-                        "confidence%": 0,
-                        "skip": "plan_not_armed_yet",
-                    }
+                    {"symbol": s, "pick": "PENDING", "confidence%": 0, "skip": "plan_not_armed_yet"}
                     for s in syms
                 ],
             }
         else:
-            # Post-gate (or past day): compute plan normally
-            plan_source = "computed"
-            raw_plans = _build_raw_plans_for_day(plan_day_str)
-            portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs) or {}
-            portfolio_state["date"] = plan_day_str
-            portfolio_state.setdefault("plan_status", "READY")
-            plan_source = "stored"
+            plan_source = "missing"
+            syms = list(SETTINGS.symbols or [])
+            portfolio_state = {
+                "date": plan_day_str,
+                "mode": SETTINGS.mode,
+                "daily_risk_rs": daily_risk_rs,
+                "active_trades": 0,
+                "risk_per_trade_rs": 0,
+                "total_planned_risk_rs": 0,
+                "plan_status": "MISSING",
+                "plans": [
+                    {"symbol": s, "pick": "PENDING", "confidence%": 0, "skip": "plan_snapshot_missing"}
+                    for s in syms
+                ],
+            }
+
+    portfolio_state = dict(portfolio_state)
+    portfolio_state["date"] = plan_day_str
+    portfolio_state.setdefault("daily_risk_rs", daily_risk_rs)
+    portfolio_state.setdefault("plan_status", "READY" if plan_source == "snapshot" else portfolio_state.get("plan_status"))
+    portfolio_state.setdefault("plan_locked", True if plan_source == "snapshot" else False)
 
     plans: List[Dict[str, Any]] = portfolio_state.get("plans") or []
-    plans_by_sym: Dict[str, Dict[str, Any]] = {
-        p.get("symbol"): p for p in plans if isinstance(p, dict)
-    }
+    plans_by_sym: Dict[str, Dict[str, Any]] = {p.get("symbol"): p for p in plans if isinstance(p, dict)}
 
-    # 5) Build per-symbol view for UI
+    # Build per-symbol view for UI
     result_symbols: Dict[str, Any] = {}
 
-    for sym in SETTINGS.symbols:
+    syms = [p.get("symbol") for p in (portfolio_state.get("plans") or []) if isinstance(p, dict) and p.get("symbol")] or list(SETTINGS.symbols or [])
+
+    for sym in syms:
         quote = quotes_by_sym.get(sym, {}) or {}
         plan = plans_by_sym.get(sym, {}) or {}
 
-        # Tags priority:
-        # (A) plan["tags"] (post-plan)
+        # Tags priority: plan.tags -> flattened keys -> state.tags
         tags: Dict[str, Any] = {}
         plan_tags = plan.get("tags")
         if isinstance(plan_tags, dict):
             tags.update(plan_tags)
 
-        # (B) flattened plan keys (compat)
         for key in ("OpeningTrend", "OpenLocation", "PrevDayContext"):
             if key not in tags and key in plan:
                 tags[key] = plan.get(key)
 
-        # (C) state["tags"][sym] fallback (pre-09:40 tags-only stage)
         st = tags_by_sym.get(sym) or {}
         if isinstance(st, dict):
             for key in ("OpeningTrend", "OpenLocation", "PrevDayContext"):
@@ -498,17 +504,11 @@ def api_live_state(
                     if v is not None:
                         tags[key] = v
 
-        # Ensure keys always exist (UI stability)
         tags.setdefault("OpeningTrend", "")
         tags.setdefault("OpenLocation", "")
         tags.setdefault("PrevDayContext", "")
 
-        # Confidence: allow both "confidence%" and "confidence"
-        confidence = None
-        if "confidence%" in plan:
-            confidence = plan.get("confidence%")
-        elif "confidence" in plan:
-            confidence = plan.get("confidence")
+        confidence = plan.get("confidence%") if "confidence%" in plan else plan.get("confidence")
 
         plan_view = {
             "pick": plan.get("pick"),
@@ -531,7 +531,7 @@ def api_live_state(
             "plan": plan_view,
         }
 
-    # 6) Overlay paper truth (positions/PnL) onto plan view
+    # Overlay paper truth (positions/PnL)
     positions_by_sym = live_state.get("positions") or {}
     open_total = 0.0
     realized_total = 0.0
@@ -541,7 +541,6 @@ def api_live_state(
             pos = positions_by_sym.get(sym)
             if not isinstance(pos, dict):
                 continue
-
             row["paper"] = pos
             plan_view = row.get("plan") or {}
 
@@ -551,7 +550,6 @@ def api_live_state(
             elif side == "SHORT":
                 plan_view["pick"] = "BEAR"
 
-            # Force critical fields from paper execution
             plan_view["entry"] = pos.get("entry_price")
             plan_view["stop"] = pos.get("stop_price")
             plan_view["qty"] = pos.get("qty")
@@ -593,11 +591,10 @@ def api_live_state(
         "realized_pnl_rs": realized_total,
     }
 
-    return {
-        "meta": meta,
-        "symbols": result_symbols,
-    }
+    return {"meta": meta, "symbols": result_symbols}
 
+
+@router.get("/api/state_raw")
 
 @router.get("/api/state_raw")
 def api_state_raw():
@@ -659,31 +656,27 @@ def api_plan_arm_day(
     ),
 ):
     """
-    Build the full 10-symbol parity plan for a specific trading day and
-    persist it into live_state.json under 'portfolio_plan'.
-
-    - Uses the same logic as GET /api/state.
-    - If 'day' is omitted, uses today's date.
-    - If 'risk' is provided, it overrides the default daily risk.
+    Single truth arm endpoint:
+      - Uses apps.runtime.daily_timeline.arm_portfolio_for_day (writes PlanSnapshot + portfolio_plan)
+      - Returns the stored portfolio_plan (snapshot source)
     """
     if day is None:
         day = _today_str()
 
-    # Build raw plans (tags + pick + entry/stop/targets) for each symbol
-    raw_plans = _build_raw_plans_for_day(day)
+    from apps.runtime.daily_timeline import arm_portfolio_for_day
+    arm_portfolio_for_day(day, risk_rs=(int(risk) if risk is not None else None), wait_for_time=False)
 
-    # Decide daily risk: override if query param provided, else use settings
-    if risk is not None:
-        daily_risk_rs = int(risk)
-    else:
-        daily_risk_rs = _effective_daily_risk_rs()
+    st = aj.read(default={}) or {}
+    ps = st.get("plan_snapshot") or {}
+    pp = st.get("portfolio_plan") or ps.get("portfolio_plan") or {}
 
-    # Apply portfolio parity split
-    portfolio_state = _apply_portfolio_split(raw_plans, daily_risk_rs)
+    if isinstance(pp, dict):
+        out = dict(pp)
+        out["date"] = day
+        out["plan_locked"] = True
+        out["plan_status"] = "READY"
+        out["plan_source"] = "snapshot"
+        return out
 
-    # Force portfolio date to match requested day
-    portfolio_state["date"] = day
-
-    # Persist into live_state.json under 'portfolio_plan'
-    return _write_portfolio_plan_to_state(portfolio_state)
+    return {"status": "error", "day": day, "detail": "plan_snapshot_missing"}
 

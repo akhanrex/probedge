@@ -323,30 +323,6 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
 
     long_side = (pick == "BULL")
     ot = tags.get("OpeningTrend") or "TR"
-
-    # ---------- 09:40→15:05 window (entry) ----------
-    if "_mins" in df_day.columns:
-        w09 = df_day[(df_day["_mins"] >= 9 * 60 + 40) & (df_day["_mins"] <= 15 * 60 + 5)]
-    else:
-        dt = pd.to_datetime(df_day["DateTime"])
-        mins = dt.dt.hour * 60 + dt.dt.minute
-        w09 = df_day[(mins >= 9 * 60 + 40) & (mins <= 15 * 60 + 5)]
-
-    if w09.empty:
-        return {
-            "symbol": sym_upper,
-            "date": requested_day_str,
-            "effective_data_day": effective_data_day_str,
-            "tags": tags,
-            "pick": pick,
-            "confidence%": int(conf_pct),
-            "reason": reason,
-            "skip": "missing_0940_1505_window",
-            "parity_mode": True,
-        }
-
-    entry_px = float(w09["Open"].iloc[0])
-
     # ---------- ORB window (09:15→09:35) ----------
     if "_mins" in df_day.columns:
         w_orb = df_day[(df_day["_mins"] >= 9 * 60 + 15) & (df_day["_mins"] <= 9 * 60 + 35)]
@@ -367,6 +343,26 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
             "skip": "missing_orb_window",
             "parity_mode": True,
         }
+
+    
+    # --- Entry trigger: 5th-bar break (LIVE-safe: no post-09:40 bars needed) ---
+    # w_orb covers bars 1..5 (09:15..09:35 start-times). We require 5 bars.
+    w_orb = w_orb.sort_values("DateTime")
+    if len(w_orb) < 5:
+        return {
+            "symbol": sym_upper,
+            "date": requested_day_str,
+            "effective_data_day": effective_data_day_str,
+            "tags": tags,
+            "pick": pick,
+            "confidence%": int(conf_pct),
+            "reason": reason,
+            "skip": "missing_orb_bars_1_5",
+            "parity_mode": True,
+        }
+
+    bar5 = w_orb.iloc[4]  # 5th TM5 bar (09:35 start)
+    entry_px = float(bar5["High"] if long_side else bar5["Low"])
 
     orb_h = float(w_orb["High"].max())
     orb_l = float(w_orb["Low"].min())
@@ -424,6 +420,14 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
     t1 = entry_px + risk_per_share if long_side else entry_px - risk_per_share
     t2 = entry_px + 2 * risk_per_share if long_side else entry_px - 2 * risk_per_share
 
+    # --- Exit rule (locked):
+    #  - If OpeningTrend == TR => exit at R1
+    #  - Else exit at R2
+    #  - Override: OT=BULL and OL=OOH and PDC=BULL => exit at R1
+    ol = (tags.get("OpenLocation") or "").strip()
+    pdc = (tags.get("PrevDayContext") or "").strip()
+    exit_at = "R1" if (ot == "TR" or (ot == "BULL" and ol == "OOH" and pdc == "BULL")) else "R2"
+
     plan = {
         "symbol": sym_upper,
         "date": requested_day_str,
@@ -438,7 +442,9 @@ def build_parity_plan(symbol: str, day_str: Optional[str] = None) -> Dict[str, A
         "risk_per_share": round(float(risk_per_share), 4),
         "target1": round(float(t1), 4),
         "target2": round(float(t2), 4),
+        "exit_at": exit_at,
         "per_trade_risk_rs_used": int(per_trade_risk_rs),
         "parity_mode": True,
     }
     return plan
+
