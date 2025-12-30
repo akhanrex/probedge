@@ -8,3 +8,4 @@ Requires-Dist: pydantic>=2.6
 Requires-Dist: python-dotenv>=1.0
 Requires-Dist: pyyaml>=6.0
 Requires-Dist: pandas>=2.2
+Requires-Dist: kiteconnect>=4.2
